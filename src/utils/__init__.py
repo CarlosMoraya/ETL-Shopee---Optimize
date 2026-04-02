@@ -10,7 +10,6 @@ from .config import (
     SHOPEE_EMAIL,
     SHOPEE_PWD,
 )
-from .browser_manager import create_browser, create_context, create_page
 
 __all__ = [
     "get_logger",
@@ -20,7 +19,4 @@ __all__ = [
     "DATA_PROCESSED_DIR",
     "SHOPEE_EMAIL",
     "SHOPEE_PWD",
-    "create_browser",
-    "create_context",
-    "create_page",
 ]
