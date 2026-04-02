@@ -1,4 +1,4 @@
-name: '01 - ETL Shopee (SEM BROWSER)
+name: '01 - ETL Shopee (SEM BROWSER)'
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Checkout do código
+      - name: Checkout do codigo
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -27,7 +27,7 @@ jobs:
 
       - name: Testar import sem Playwright
         run: |
-          python -c "import requests; import pandas; print('✅ Imports OK - Sem Playwright!')"
+          python -c "import requests; import pandas; print('OK - Sem Playwright!')"
 
       - name: Rodar Pipeline ETL
         env:
