@@ -34,5 +34,19 @@ jobs:
           SHOPEE_EMAIL: ${{ secrets.SHOPEE_EMAIL }}
           SHOPEE_PWD: ${{ secrets.SHOPEE_PWD }}
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          # Cookies de autenticação
+          SHOPEE_FMS_USER_SKEY: ${{ secrets.SHOPEE_FMS_USER_SKEY }}
+          SHOPEE_SPX_UK: ${{ secrets.SHOPEE_SPX_UK }}
+          SHOPEE_FMS_USER_ID: ${{ secrets.SHOPEE_FMS_USER_ID }}
+          SHOPEE_FMS_DISPLAY_NAME: ${{ secrets.SHOPEE_FMS_DISPLAY_NAME }}
+          SHOPEE_FMS_USER_AGENCY_ID: ${{ secrets.SHOPEE_FMS_USER_AGENCY_ID }}
+          SHOPEE_SPX_AGID: ${{ secrets.SHOPEE_SPX_AGID }}
+          SHOPEE_SPX_CID: ${{ secrets.SHOPEE_SPX_CID }}
+          SHOPEE_SPX_DN: ${{ secrets.SHOPEE_SPX_DN }}
+          SHOPEE_SPX_ST: ${{ secrets.SHOPEE_SPX_ST }}
+          SHOPEE_SPX_UID: ${{ secrets.SHOPEE_SPX_UID }}
+          SHOPEE_ADMIN_DEVICE_ID: ${{ secrets.SHOPEE_ADMIN_DEVICE_ID }}
+          SHOPEE_ADMIN_LANG: ${{ secrets.SHOPEE_ADMIN_LANG }}
+          SHOPEE_SSC_USER_ROLE: ${{ secrets.SHOPEE_SSC_USER_ROLE }}
         run: |
           python -m src.pipelines.shopee_monitoramento_pipeline
