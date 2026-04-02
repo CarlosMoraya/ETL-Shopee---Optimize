@@ -1,0 +1,38 @@
+name: '01 - ETL Shopee (SEM BROWSER)
+
+on:
+  workflow_dispatch:
+    # Permite trigger manual
+
+jobs:
+  etl-shopee-request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar APENAS requests
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas openpyxl sqlalchemy psycopg2-binary python-dotenv
+          echo "=== Pacotes instalados ==="
+          pip list
+
+      - name: Testar import sem Playwright
+        run: |
+          python -c "import requests; import pandas; print('✅ Imports OK - Sem Playwright!')"
+
+      - name: Rodar Pipeline ETL
+        env:
+          SHOPEE_EMAIL: ${{ secrets.SHOPEE_EMAIL }}
+          SHOPEE_PWD: ${{ secrets.SHOPEE_PWD }}
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          python -m src.pipelines.shopee_monitoramento_pipeline
