@@ -5,13 +5,14 @@ Destino: data/raw/shopee_monitoramento/processed_*.csv
 
 Autentica com email/senha reais. Não precisa de cookies manuais.
 """
+import asyncio
 import requests
 import os
 from pathlib import Path
 from datetime import datetime
 import time
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from src.utils import get_logger, DATA_RAW_DIR
 
@@ -22,7 +23,7 @@ BASE_URL = "https://logistics.myagencyservice.com.br"
 EXPORT_URL = f"{BASE_URL}/mgmt/api/pc/agency/metric/lm/export_fleet_list_v2"
 
 
-def fazer_login_e_obter_cookies() -> dict:
+async def fazer_login_e_obter_cookies() -> dict:
     """
     Abre um browser headless, faz login com email/senha
     e retorna os cookies de sessão prontos para uso.
@@ -37,12 +38,12 @@ def fazer_login_e_obter_cookies() -> dict:
 
     logger.info("Iniciando Playwright para autenticação...")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
-        context = browser.new_context(
+        context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -50,43 +51,37 @@ def fazer_login_e_obter_cookies() -> dict:
             ),
             locale="pt-BR",
         )
-        page = context.new_page()
+        page = await context.new_page()
 
         try:
             logger.info(f"Abrindo página de login: {LOGIN_PAGE_URL}")
-            page.goto(LOGIN_PAGE_URL, wait_until="networkidle", timeout=60_000)
+            await page.goto(LOGIN_PAGE_URL, wait_until="networkidle", timeout=60_000)
 
             logger.info("Preenchendo credenciais...")
 
-            # Campo de email — tenta seletores comuns
             email_field = page.locator(
                 "input[type='email'], input[name='email'], input[placeholder*='mail' i], input[id*='email' i]"
             ).first
-            email_field.fill(email)
+            await email_field.fill(email)
 
-            senha_field = page.locator(
-                "input[type='password']"
-            ).first
-            senha_field.fill(senha)
+            senha_field = page.locator("input[type='password']").first
+            await senha_field.fill(senha)
 
             logger.info("Clicando em login...")
             botao_login = page.locator(
                 "button[type='submit'], button:has-text('Login'), button:has-text('Entrar'), button:has-text('Sign in')"
             ).first
-            botao_login.click()
+            await botao_login.click()
 
-            # Aguarda o redirecionamento para o portal de logística
             logger.info("Aguardando redirecionamento para o portal...")
-            page.wait_for_url(f"{BASE_URL}/**", timeout=60_000)
-            page.wait_for_load_state("networkidle", timeout=30_000)
+            await page.wait_for_url(f"{BASE_URL}/**", timeout=60_000)
+            await page.wait_for_load_state("networkidle", timeout=30_000)
 
             logger.info(f"Redirecionado para: {page.url}")
 
-            # Extrair todos os cookies
-            raw_cookies = context.cookies()
+            raw_cookies = await context.cookies()
             cookies = {c["name"]: c["value"] for c in raw_cookies}
 
-            # Verificar se os cookies essenciais estão presentes
             essenciais = ["fms_user_skey", "spx_uk", "fms_user_id"]
             faltando = [c for c in essenciais if c not in cookies]
             if faltando:
@@ -98,29 +93,24 @@ def fazer_login_e_obter_cookies() -> dict:
             return cookies
 
         except PlaywrightTimeoutError as e:
-            # Captura screenshot para diagnóstico
             screenshot_path = DATA_RAW_DIR / "login_erro.png"
             screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-            page.screenshot(path=str(screenshot_path))
+            await page.screenshot(path=str(screenshot_path))
             logger.error(f"Timeout durante login. Screenshot salvo em: {screenshot_path}")
             raise Exception(f"Timeout no login Playwright: {e}") from e
 
         finally:
-            browser.close()
+            await browser.close()
 
 
 class ShopeeExtractor:
     """
-    Extrator da Shopee — autentica via Playwright, usa API com cookies frescos.
+    Extrator da Shopee — usa cookies obtidos via Playwright.
     """
 
-    def __init__(self):
+    def __init__(self, cookies: dict):
         self.session = requests.Session()
 
-        # Obter cookies frescos via login automático
-        cookies = fazer_login_e_obter_cookies()
-
-        # Configurar headers
         self.session.headers.update({
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -193,7 +183,7 @@ class ShopeeExtractor:
         self.session.close()
 
 
-def extract_shopee_monitoramento() -> Path:
+async def extract_shopee_monitoramento() -> Path:
     """
     Extrai dados de monitoramento de motoristas da Shopee.
     Faz login automático via Playwright, sem necessidade de cookies manuais.
@@ -207,14 +197,15 @@ def extract_shopee_monitoramento() -> Path:
     output_path = DATA_RAW_DIR / "shopee_monitoramento"
     output_path.mkdir(parents=True, exist_ok=True)
 
-    extractor = ShopeeExtractor()
+    cookies = await fazer_login_e_obter_cookies()
+
+    extractor = ShopeeExtractor(cookies)
 
     try:
         time.sleep(1)
 
         arquivo_baixado = extractor.baixar_export(output_path)
 
-        # Ler arquivo
         sufixo = Path(arquivo_baixado).suffix.lower()
         logger.info(f"Lendo arquivo ({sufixo}): {arquivo_baixado}")
         if sufixo == ".csv":
@@ -222,7 +213,6 @@ def extract_shopee_monitoramento() -> Path:
         else:
             df = pd.read_excel(arquivo_baixado, engine="openpyxl")
 
-        # Transformar (separar ID do nome)
         logger.info("Transformando dados...")
         if "Driver Name" in df.columns:
             extracao = df["Driver Name"].str.extract(r"\[(.*?)\]\s*(.*)")
@@ -231,7 +221,6 @@ def extract_shopee_monitoramento() -> Path:
             df["driver_id"] = df["driver_id"].fillna("")
             df["Driver Name"] = df["Driver Name"].fillna("")
 
-        # Normalizar nomes das colunas
         df.columns = (
             df.columns
             .str.replace("（", "(").str.replace("）", ")")
@@ -251,7 +240,6 @@ def extract_shopee_monitoramento() -> Path:
 
         df["extracted_at"] = datetime.now()
 
-        # Salvar processado
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         processed_file = output_path / f"processed_{timestamp}.csv"
         df.to_csv(processed_file, index=False)
@@ -273,16 +261,13 @@ def extract_shopee_monitoramento() -> Path:
         extractor.close()
 
 
-async def run():
-    try:
-        arquivo_processado = extract_shopee_monitoramento()
-        logger.info(f"✅ Extração concluída: {arquivo_processado}")
-        return str(arquivo_processado)
-    except Exception as e:
-        logger.error(f"❌ Falha na extração: {e}")
-        raise
-
-
 if __name__ == "__main__":
-    import asyncio
+    async def run():
+        try:
+            arquivo_processado = await extract_shopee_monitoramento()
+            logger.info(f"✅ Extração concluída: {arquivo_processado}")
+        except Exception as e:
+            logger.error(f"❌ Falha na extração: {e}")
+            raise
+
     asyncio.run(run())
