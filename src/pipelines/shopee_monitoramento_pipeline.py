@@ -70,7 +70,7 @@ async def run_pipeline(table_name: str = "shopee_monitoramento"):
     try:
         # EXTRACT
         logger.info("\n📥 FASE 1: EXTRAÇÃO")
-        arquivo_processado = await extract_shopee_monitoramento()
+        arquivo_processado = extract_shopee_monitoramento()
         
         # TRANSFORM
         logger.info("\n🔄 FASE 2: TRANSFORMAÇÃO")
