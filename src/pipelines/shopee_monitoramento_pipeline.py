@@ -84,7 +84,7 @@ async def run_pipeline(table_name: str = "shopee_monitoramento"):
             df=df,
             table_name=table_name,
             schema="public",
-            if_exists="append",
+            if_exists="replace",
         )
         
         # Resumo
