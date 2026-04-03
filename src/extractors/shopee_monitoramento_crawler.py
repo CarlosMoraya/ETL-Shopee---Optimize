@@ -57,11 +57,25 @@ async def fazer_login_e_obter_cookies() -> dict:
             logger.info(f"Abrindo página de login: {LOGIN_PAGE_URL}")
             await page.goto(LOGIN_PAGE_URL, wait_until="networkidle", timeout=60_000)
 
+            # Screenshot de diagnóstico — mostra o que carregou
+            screenshot_pre = DATA_RAW_DIR / "login_pre.png"
+            screenshot_pre.parent.mkdir(parents=True, exist_ok=True)
+            await page.screenshot(path=str(screenshot_pre))
+            logger.info(f"Screenshot pré-login salvo: {screenshot_pre}")
+
+            # Log da URL atual e todos os inputs visíveis
+            logger.info(f"URL atual: {page.url}")
+            inputs = await page.locator("input").all()
+            for inp in inputs:
+                tipo = await inp.get_attribute("type") or ""
+                nome = await inp.get_attribute("name") or ""
+                id_ = await inp.get_attribute("id") or ""
+                placeholder = await inp.get_attribute("placeholder") or ""
+                logger.info(f"  input: type={tipo!r} name={nome!r} id={id_!r} placeholder={placeholder!r}")
+
             logger.info("Preenchendo credenciais...")
 
-            email_field = page.locator(
-                "input[type='email'], input[name='email'], input[placeholder*='mail' i], input[id*='email' i]"
-            ).first
+            email_field = page.locator("input").nth(0)
             await email_field.fill(email)
 
             senha_field = page.locator("input[type='password']").first
