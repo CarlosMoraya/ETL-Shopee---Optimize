@@ -124,15 +124,18 @@ async def extract_shopee_driver_profile() -> Path:
             logger.info("Exportação solicitada — aguardando processamento...")
             await page.wait_for_timeout(5_000)
 
-            # 6. ABRIR PAINEL DE TAREFAS DE EXPORTAÇÃO
-            # O botão "Baixar" só aparece depois de abrir este painel
-            logger.info("Abrindo painel de tarefas de exportação...")
+            # 6. ABRIR PAINEL/ABA DE HISTÓRICO DE EXPORTAÇÃO
+            # O botão "Baixar" só aparece depois de abrir o histórico correto
+            logger.info("Abrindo histórico de exportação...")
             painel_aberto = False
             for seletor, nome in [
+                ('button:has-text("Log")', "botão Log"),
+                ('span:has-text("Log")', "aba Log"),
+                ('text=Log', "texto Log"),
                 ('.anticon-file, .ssc-icon-file, [class*="task-icon"], svg[class*="file"]', "ícone de tarefas"),
-                ('.anticon-bell, .ssc-icon-bell, [class*="bell"]', "ícone de notificações"),
                 ('text=Export History', "Export History"),
                 ('text=Histórico de Exportação', "Histórico de Exportação"),
+                ('.anticon-bell, .ssc-icon-bell, [class*="bell"]', "ícone de notificações"),
             ]:
                 try:
                     el = page.locator(seletor).first
@@ -146,7 +149,7 @@ async def extract_shopee_driver_profile() -> Path:
                     pass
 
             if not painel_aberto:
-                logger.warning("Painel de tarefas não encontrado — tentando localizar 'Baixar' diretamente")
+                logger.warning("Painel de histórico não encontrado — tentando localizar 'Baixar' diretamente")
 
             # Screenshot imediatamente após abrir painel
             await page.screenshot(path=str(output_path / "painel_aberto.png"), full_page=True)
