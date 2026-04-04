@@ -199,10 +199,9 @@ def upsert_to_neon(
             result = conn.execute(text(query))
             conn.commit()
             rows_affected = result.rowcount
-        
-        # Dropar tabela temporária
-        conn.execute(text(f"DROP TABLE IF EXISTS {schema}.{temp_table}"))
-        conn.commit()
+            # Dropar tabela temporária dentro do mesmo bloco de conexão
+            conn.execute(text(f"DROP TABLE IF EXISTS {schema}.{temp_table}"))
+            conn.commit()
         
         logger.info(f"✅ UPSERT concluído! {rows_affected} linhas afetadas.")
         return rows_affected
