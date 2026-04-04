@@ -163,24 +163,30 @@ async def extract_shopee_driver_profile() -> Path:
             logger.info("Aguardando botão 'Baixar' ficar disponível (até 120s)...")
             caminho_arquivo = None
 
+            # Quantidade de botões Baixar ANTES de o novo export ficar pronto
+            botoes_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")')
+            count_antes = await botoes_baixar.count()
+            logger.info(f"Botões 'Baixar' já existentes no Log (exportações anteriores): {count_antes}")
+
             for tentativa in range(120):
                 await page.wait_for_timeout(1_000)
                 botoes_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")')
                 count = await botoes_baixar.count()
-                if count > 0:
-                    logger.info(f"✅ Botão 'Baixar' disponível após {tentativa + 1}s!")
+                # Aguarda aparecer UM NOVO botão Baixar além dos que já existiam
+                if count > count_antes:
+                    logger.info(f"✅ Novo botão 'Baixar' disponível após {tentativa + 1}s! Total: {count}")
                     break
                 if (tentativa + 1) % 15 == 0:
-                    logger.info(f"Aguardando processamento... ({tentativa + 1}/120s)")
+                    logger.info(f"Aguardando processamento... ({tentativa + 1}/120s) — botões atuais: {count}")
                     await page.screenshot(path=str(output_path / f"aguardando_{tentativa+1}s.png"))
             else:
                 await page.screenshot(path=str(output_path / "erro_timeout_download.png"))
-                raise Exception("Timeout: export não ficou pronto em 120s.")
+                raise Exception("Timeout: novo export não ficou pronto em 120s.")
 
-            # 7. DOWNLOAD
-            logger.info("Clicando em 'Baixar'...")
+            # 7. DOWNLOAD — clica no ÚLTIMO botão (o mais recente)
+            logger.info("Clicando em 'Baixar' no export mais recente...")
             async with page.expect_download(timeout=120_000) as download_info:
-                await botoes_baixar.first.click()
+                await botoes_baixar.last.click()
 
             download = await download_info.value
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
