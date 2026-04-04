@@ -143,25 +143,37 @@ async def extract_shopee_pnr() -> Path:
                 await page.screenshot(path=str(output_path / "erro_painel.png"))
                 raise Exception("Não foi possível abrir o painel 'Última tarefa'.")
 
-            # 6. AGUARDAR BOTÃO "BAIXAR" NO PAINEL
+            # 6. AGUARDAR BOTÃO "BAIXAR" NO PAINEL (reabrindo para atualizar status)
             logger.info("Aguardando botão 'Baixar' no painel...")
             caminho_arquivo = None
-            botao_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")').first
             encontrado = False
-            for tentativa_baixar in range(4):
+            botao_baixar = None
+
+            for tentativa_baixar in range(8):
+                botao_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")').first
                 try:
                     await botao_baixar.wait_for(timeout=30_000)
-                    logger.info(f"✅ Botão 'Baixar' encontrado após {tentativa_baixar * 30}s adicionais!")
+                    logger.info(f"✅ Botão 'Baixar' encontrado (tentativa {tentativa_baixar + 1})!")
                     encontrado = True
                     break
                 except Exception:
                     elapsed_extra = (tentativa_baixar + 1) * 30
-                    logger.info(f"Botão 'Baixar' não visível ainda — aguardando mais 30s ({elapsed_extra}s extra)...")
+                    logger.info(f"Não visível ainda — reabrindo painel para atualizar ({elapsed_extra}s extra)...")
                     await page.screenshot(path=str(output_path / f"aguardando_baixar_{elapsed_extra}s.png"))
+                    # Fecha o painel clicando fora e reabre para atualizar o status
+                    await page.keyboard.press("Escape")
+                    await page.wait_for_timeout(2_000)
+                    try:
+                        icone = page.locator('div[data-v-13320df0].icon').first
+                        await icone.wait_for(timeout=5_000)
+                        await icone.click()
+                        await page.wait_for_timeout(3_000)
+                    except Exception as e:
+                        logger.warning(f"Erro ao reabrir painel: {e}")
 
             if not encontrado:
                 await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
-                raise Exception("Timeout: botão 'Baixar' não apareceu no painel após 120s adicionais.")
+                raise Exception("Timeout: botão 'Baixar' não apareceu no painel após 240s adicionais.")
 
             # 7. DOWNLOAD
             logger.info("Clicando em 'Baixar' no export mais recente...")
