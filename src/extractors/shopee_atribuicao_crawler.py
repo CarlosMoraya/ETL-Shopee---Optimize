@@ -3,14 +3,15 @@ Extractor: Atribuição de Entrega
 Fonte: Shopee Logistics - Login via Playwright (navegação real no portal)
 Destino: data/raw/shopee_atribuicao/processed_*.csv
 
-Fluxo:
+Fluxo baseado no passo a passo manual funcional:
 1. Login no portal
-2. Expandir menu "Entrega LM" → clicar "Atribuição de Entrega"
-3. Flegar todas as Estações (checkbox select-all)
-4. Clicar "Exportar AT"
-5. Aguardar 90s e abrir painel "Última tarefa"
-6. Clicar "Baixar"
-7. Tratar com pandas
+2. Navegar para "Atribuição de Entrega"
+3. Clicar em "Todos" (tab)
+4. Clicar no dropdown "Todos" → "Select All in All Pages"
+5. Clicar em "Exportar AT"
+6. Aguardar 30 segundos
+7. Abrir painel "Última tarefa" e clicar "Baixar"
+8. Tratar com pandas
 """
 import asyncio
 import os
@@ -63,278 +64,185 @@ async def extract_shopee_atribuicao() -> Path:
 
         try:
             # 1. LOGIN
-            logger.info(f"Acessando portal: {PORTAL_URL}")
-            await page.goto(PORTAL_URL, wait_until="networkidle", timeout=60_000)
+            login_url = (
+                "https://accounts.myagencyservice.com.br/authenticate/login?"
+                "lang=pt-BR&should_hide_back=true&client_id=15&"
+                "next=https%3A%2F%2Flogistics.myagencyservice.com.br%2Fauth%2Fcallback"
+                "%3Frefer%3Dhttps%3A%2F%2Flogistics.myagencyservice.com.br%2F%23%2Fagency-assignment%2Flist"
+            )
+            logger.info(f"Acessando página de login: {login_url[:80]}...")
+            await page.goto(login_url, wait_until="networkidle", timeout=60_000)
 
-            logger.info("Aguardando formulário de login...")
-            await page.locator('input[type="password"]').wait_for(timeout=30_000)
+            logger.info("Preenchendo email...")
+            email_input = page.locator('input[autocomplete="email"]').first
+            await email_input.wait_for(timeout=30_000)
+            await email_input.fill(email)
 
-            logger.info("Preenchendo credenciais...")
-            await page.locator('input[autocomplete="email"]').fill(email)
-            await page.locator('input[type="password"]').fill(senha)
+            logger.info("Preenchendo senha...")
+            senha_input = page.locator('input[type="password"]').first
+            await senha_input.fill(senha)
 
-            logger.info("Submetendo login...")
-            await page.locator('input[type="password"]').press("Enter")
+            logger.info("Clicando no botão de login...")
+            botao_login = page.locator('button[type="submit"]').first
+            await botao_login.click()
 
             logger.info("Aguardando portal carregar após login...")
-            login_ok = False
-            for seletor_menu in [
-                'text="Força de trabalho"',
-                'text="Dashboard"',
-                'text="Home"',
-                '.nav-menu',
-                '.sidebar',
-                '[class*="menu"]',
-                '[class*="sidebar"]',
-            ]:
-                try:
-                    await page.locator(seletor_menu).first.wait_for(timeout=60_000)
-                    logger.info(f"✅ Login confirmado — elemento '{seletor_menu}' carregado!")
-                    login_ok = True
-                    break
-                except Exception:
-                    pass
-            if not login_ok:
-                await page.screenshot(path=str(output_path / "login_erro.png"))
-                raise Exception("Login falhou — credenciais incorretas ou portal travou.")
+            await page.locator('text="Força de trabalho"').wait_for(timeout=60_000)
+            logger.info("✅ Login confirmado!")
 
             # 2. NAVEGAR PARA ATRIBUIÇÃO DE ENTREGA
-            # Navega diretamente pela URL (evita necessidade de expandir menu manualmente)
             logger.info(f"Navegando para: {ATRIBUICAO_URL}")
             await page.goto(ATRIBUICAO_URL, wait_until="domcontentloaded", timeout=60_000)
             await page.wait_for_timeout(10_000)
-            await page.screenshot(path=str(output_path / "pagina_carregada.png"))
+            await page.screenshot(path=str(output_path / "pagina_atribuicao.png"))
             logger.info("✅ Página de Atribuição de Entrega carregada.")
 
-            # 3. SELECIONAR TODAS AS PÁGINAS via dropdown de seleção
-            logger.info("Clicando no dropdown de seleção (seta SVG)...")
+            # 3. CLICAR NA TAB "TODOS"
+            logger.info("Clicando na tab 'Todos'...")
             try:
-                seta_dropdown = page.locator('svg[viewBox="0 0 17 16"]').first
-                await seta_dropdown.wait_for(timeout=20_000)
-                await seta_dropdown.click()
-                await page.wait_for_timeout(1_500)
-                logger.info("Clicando em 'Select All in All Pages'...")
-                await page.wait_for_timeout(1_000)
-                opcao_all_pages = page.locator('.ssc-react-table-selection-menu-item', has_text="Select All in All Pages")
-                await opcao_all_pages.click(force=True)
+                tab_todos = page.locator('text="Todos"').first
+                await tab_todos.wait_for(timeout=10_000)
+                await tab_todos.click()
                 await page.wait_for_timeout(2_000)
-                logger.info("✅ 'Select All in All Pages' selecionado.")
-                await page.wait_for_timeout(20_000)
+                logger.info("✅ Tab 'Todos' clicada.")
             except Exception as e:
-                logger.warning(f"Dropdown de seleção não encontrado: {e}")
-                await page.screenshot(path=str(output_path / "erro_select_all_pages.png"))
+                logger.warning(f"Tab 'Todos' não encontrada ou já selecionada: {e}")
 
-            # 4. REGISTRAR EXPORTS EXISTENTES antes de disparar novo export
-            HISTORY_URL = (
-                "https://logistics.myagencyservice.com.br"
-                "/api/delivery/agency/assignment/assignment_task/export/history"
-            )
-            logger.info("Registrando exports existentes antes de exportar...")
-            hist_antes = await page.request.get(HISTORY_URL, timeout=30_000)
-            hist_json = await hist_antes.json()
-            existing_task_ids = {
-                e["task_id"] for e in hist_json.get("data", {}).get("exports", [])
-            }
-            logger.info(f"Task IDs existentes: {existing_task_ids}")
+            # 4. CLICAR NO DROPDOWN "TODOS" → "SELECT ALL IN ALL PAGES"
+            logger.info("Clicando no dropdown 'Todos'...")
+            try:
+                # Clicar no dropdown que mostra "Todos"
+                dropdown_todos = page.locator('.ssc-react-table-selection-menu-trigger').first
+                await dropdown_todos.wait_for(timeout=10_000)
+                await dropdown_todos.click()
+                await page.wait_for_timeout(1_000)
+                
+                logger.info("Clicando em 'Select All in All Pages'...")
+                opcao_all_pages = page.locator('text="Select All in All Pages"').first
+                await opcao_all_pages.click()
+                await page.wait_for_timeout(3_000)
+                logger.info("✅ 'Select All in All Pages' selecionado.")
+            except Exception as e:
+                logger.warning(f"Erro ao selecionar todos: {e}")
+                await page.screenshot(path=str(output_path / "erro_select_all.png"))
 
-            # 5. DISPARAR EXPORT — usar page.route para interceptar requests
-            logger.info("Configurando interceptação de requests via page.route()...")
-            captured_requests = []
-            
-            async def handle_route(route, request):
-                captured_requests.append({
-                    "url": request.url,
-                    "method": request.method,
-                    "resource_type": request.resource_type,
-                    "post_data": request.post_data[:500] if request.post_data else None
-                })
-                # Deixar o request prosseguir normalmente
-                await route.continue_()
-            
-            # Interceptar TODOS os requests
-            await page.route("**/*", handle_route)
-            
+            # 5. CLICAR EM "EXPORTAR AT"
             logger.info("Clicando em 'Exportar AT'...")
             botao_exportar = page.locator('button:has-text("Exportar AT")').first
             await botao_exportar.wait_for(timeout=10_000)
             await botao_exportar.click()
-            await page.wait_for_timeout(10_000)
+            logger.info("✅ Botão 'Exportar AT' clicado.")
 
             # Tratar modal de confirmação, se aparecer
+            await page.wait_for_timeout(2_000)
             for seletor_confirmar in [
                 'button:has-text("Confirm")',
                 'button:has-text("Confirmar")',
                 'button:has-text("OK")',
                 'button:has-text("Yes")',
                 'button:has-text("Sim")',
-                '.ant-btn-primary:has-text("OK")',
-                '.ant-btn-primary:has-text("Confirm")',
             ]:
                 try:
                     btn = page.locator(seletor_confirmar).first
                     if await btn.is_visible():
-                        logger.info(f"Modal de confirmação detectado — clicando '{seletor_confirmar}'")
+                        logger.info(f"Modal detectado — clicando '{seletor_confirmar}'")
                         await btn.click()
-                        await page.wait_for_timeout(5_000)
+                        await page.wait_for_timeout(1_500)
                         break
                 except Exception:
                     pass
 
-            await page.wait_for_timeout(5_000)
-            
-            # Parar interceptação
-            await page.unroute("**/*", handle_route)
-            
-            # Filtrar apenas requests XHR/fetch (API calls)
-            api_requests = [r for r in captured_requests if r['resource_type'] in ('xhr', 'fetch')]
-            logger.info(f"TOTAL de requests capturados: {len(captured_requests)}")
-            logger.info(f"Requests de API (XHR/fetch): {len(api_requests)}")
-            
-            # Log apenas dos requests de API
-            for i, req in enumerate(api_requests):
-                logger.info(f"  [{i}] {req['method']} {req['url']}")
-                if req.get('post_data'):
-                    logger.info(f"       POST: {req['post_data'][:300]}")
-            
             await page.screenshot(path=str(output_path / "pos_exportar_at.png"))
 
-            # Verificar se o clique criou um novo export
-            logger.info("Verificando se export foi criado via clique...")
-            hist_pos_clique = await page.request.get(HISTORY_URL, timeout=30_000)
-            hist_pos_clique_json = await hist_pos_clique.json()
-            exports_pos_clique = hist_pos_clique_json.get("data", {}).get("exports", [])
-            novos_pos_clique = [e for e in exports_pos_clique if e["task_id"] not in existing_task_ids]
-            
-            export_criado = len(novos_pos_clique) > 0
-            
-            if export_criado:
-                logger.info(f"✅ Export criado via clique: {novos_pos_clique[0]}")
-            else:
-                logger.error("❌ Falha ao criar export — nenhum novo task_id detectado após clique no botão.")
-                logger.error(f"Total de requests: {len(captured_requests)}, API requests: {len(api_requests)}")
+            # 6. AGUARDAR 30 SEGUNDOS
+            logger.info("Aguardando 30 segundos para o export ser processado...")
+            await page.wait_for_timeout(30_000)
+            logger.info("✅ Aguardo concluído.")
+
+            # 7. ABRIR PAINEL "ÚLTIMA TAREFA"
+            logger.info("Abrindo painel 'Última tarefa'...")
+            try:
+                icone_tarefa = page.locator('.icon').filter(has_text="").first
+                await icone_tarefa.wait_for(timeout=10_000)
+                await icone_tarefa.click()
+                await page.wait_for_timeout(2_000)
                 
-                if api_requests:
-                    logger.error("Requests de API capturados:")
-                    for req in api_requests:
-                        logger.error(f"  → {req['method']} {req['url']}")
-                        if req.get('post_data'):
-                            logger.error(f"     Payload: {req['post_data']}")
-                else:
-                    logger.error("NENHUM request de API foi capturado!")
-                    
-                    # Tentar avaliar JavaScript da página
-                    logger.info("Avaliando estado da página via JavaScript...")
-                    try:
-                        page_title = await page.title()
-                        logger.info(f"Título da página: {page_title}")
-                        current_url = page.url
-                        logger.info(f"URL atual: {current_url}")
-                        
-                        # Verificar se há erros de JavaScript no console
-                        logger.info("Verificando console errors...")
-                    except Exception as e:
-                        logger.error(f"Erro ao avaliar página: {e}")
+                logger.info("Clicando em 'Ver tudo'...")
+                ver_tudo = page.locator('button:has-text("Ver tudo")').first
+                await ver_tudo.click()
+                await page.wait_for_timeout(3_000)
+                await page.screenshot(path=str(output_path / "export_task_center.png"))
+                logger.info("✅ Export Task Center aberto.")
+            except Exception as e:
+                logger.warning(f"Erro ao abrir painel: {e}")
+                # Tentar alternativa: recarregar a página e tentar novamente
+                logger.info("Tentando recarregar a página...")
+                await page.goto(ATRIBUICAO_URL, wait_until="domcontentloaded", timeout=60_000)
+                await page.wait_for_timeout(5_000)
+
+            # 8. BAIXAR O ARQUIVO MAIS RECENTE
+            logger.info("Procurando botão 'Baixar' do export mais recente...")
+            try:
+                # Procurar pelo primeiro botão "Baixar" que esteja visível
+                botoes_baixar = page.locator('button:has-text("Baixar")')
+                await botoes_baixar.first.wait_for(timeout=30_000)
                 
-                await page.screenshot(path=str(output_path / "erro_export_falhado.png"))
-                raise Exception("Falha ao criar export: botão não gerou novo task_id. Verifique logs de requests.")
-
-            # 6. ABRIR PAINEL → VER TUDO (navegação como humano)
-            logger.info("Abrindo painel 'Última tarefa' via ícone...")
-            icone = page.locator('div[data-v-13320df0].icon').first
-            await icone.wait_for(timeout=10_000)
-            await icone.click()
-            await page.wait_for_timeout(2_000)
-
-            logger.info("Clicando em 'Ver tudo'...")
-            ver_tudo = page.locator('button:has-text("Ver tudo")').first
-            await ver_tudo.wait_for(timeout=10_000)
-            await ver_tudo.click()
-            await page.wait_for_timeout(3_000)
-            await page.screenshot(path=str(output_path / "export_task_center.png"))
-            logger.info("✅ Export Task Center aberto.")
-
-            # 7. POLLING DA API para identificar o novo export de AT (ignora Romaneio e outros)
-            # Aguarda até 25 minutos (150 tentativas × 10s)
-            logger.info("Aguardando novo export de AT ficar pronto...")
-            novo_export = None
-            caminho_arquivo = None
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            status_detectados = set()
-
-            for tentativa in range(150):
-                await page.wait_for_timeout(10_000)
-                elapsed = (tentativa + 1) * 10
-                try:
-                    hist_resp = await page.request.get(HISTORY_URL, timeout=30_000)
-                    hist_json = await hist_resp.json()
-                    exports = hist_json.get("data", {}).get("exports", [])
-                    
-                    # Log da primeira resposta completa para debugging
-                    if tentativa == 0:
-                        logger.info(f"API response (todos os exports): {exports[:5]}...")
-                    
-                    novos = [e for e in exports if e["task_id"] not in existing_task_ids]
-                    if novos:
-                        # Log de todos os status detectados para debugging
-                        for e in novos:
-                            status_detectados.add(e.get("status"))
-                        
-                        # Log detalhado de novos exports
-                        logger.info(f"Novos exports detectados: {[{'task_id': e['task_id'], 'status': e.get('status'), 'filename': e.get('filename', '')} for e in novos]}")
-
-                        # status == 2 = pronto, status == 1 = processando, status == 3 = falhou
-                        concluido = next((e for e in novos if e.get("status") == 2), None)
-                        falhou = next((e for e in novos if e.get("status") in [3, 4, 5]), None)
-
-                        if falhou:
-                            logger.error(f"❌ Export falhou com status={falhou.get('status')} — task_id={falhou['task_id']}")
-                            raise Exception(f"Export falhou com status={falhou.get('status')} — task_id={falhou['task_id']}")
-
-                        if concluido:
-                            novo_export = concluido
-                            logger.info(f"✅ Novo export pronto após {elapsed}s — task_id={novo_export['task_id']}")
+                # Clicar no primeiro botão "Baixar" (mais recente)
+                botao_baixar = botoes_baixar.first
+                await botao_baixar.click()
+                logger.info("✅ Botão 'Baixar' clicado.")
+                
+                # Aguardar o download
+                async with page.expect_download(timeout=300_000) as download_info:
+                    pass  # O clique já foi feito
+                
+                download = await download_info.value
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                ext = Path(download.suggested_filename).suffix
+                caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}{ext}"
+                await download.save_as(caminho_arquivo)
+                logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+                
+            except Exception as e:
+                logger.error(f"Erro ao baixar: {e}")
+                await page.screenshot(path=str(output_path / "erro_download.png"))
+                
+                # Tentativa alternativa: buscar via API
+                logger.info("Tentando download via API...")
+                HISTORY_URL = (
+                    "https://logistics.myagencyservice.com.br"
+                    "/api/delivery/agency/assignment/assignment_task/export/history"
+                )
+                hist_resp = await page.request.get(HISTORY_URL, timeout=30_000)
+                hist_json = await hist_resp.json()
+                exports = hist_json.get("data", {}).get("exports", [])
+                
+                if exports:
+                    # Pegar o export mais recente de AT (não Romaneio)
+                    export_at = next(
+                        (e for e in exports if "romaneio" not in e.get("task_name", "").lower()),
+                        exports[0]
+                    )
+                    filename_relativo = export_at.get("filename", "")
+                    if filename_relativo:
+                        file_url = f"{PORTAL_URL.rstrip('/')}/{filename_relativo.lstrip('/')}"
+                        logger.info(f"Baixando via API: {file_url}")
+                        file_resp = await page.request.get(file_url, timeout=300_000)
+                        if file_resp.ok:
+                            caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}{ext}"
+                            caminho_arquivo.write_bytes(await file_resp.body())
+                            logger.info(f"✅ Arquivo baixado via API: {caminho_arquivo}")
                         else:
-                            logger.info(f"Novo export detectado mas ainda processando (status={[e.get('status') for e in novos]}) — {elapsed}s")
+                            raise Exception(f"Download via API falhou — status {file_resp.status}")
                     else:
-                        if tentativa % 6 == 0:  # Log a cada ~60s
-                            logger.info(f"Aguardando novo export... {elapsed}s decorridos")
-                            # Log dos últimos 3 exports existentes para ver se API está respondendo
-                            ultimos_3 = exports[:3] if len(exports) >= 3 else exports
-                            logger.info(f"Últimos exports conhecidos: {[(e.get('task_id'), e.get('status')) for e in ultimos_3]}")
-                except Exception as e:
-                    logger.warning(f"Erro ao consultar history ({elapsed}s): {e}")
-
-                if novo_export:
-                    break
-
-            if not novo_export:
-                logger.error(f"Status detectados durante polling: {status_detectados}")
-                raise Exception("Timeout: novo export de AT não ficou pronto em 25 minutos.")
-
-            # 8. BAIXAR O ARQUIVO CORRETO via URL identificada no polling
-            filename_relativo = novo_export.get("filename", "")
-            if not filename_relativo:
-                raise Exception(f"Campo 'filename' vazio no export: {novo_export}")
-
-            file_url = f"{PORTAL_URL.rstrip('/')}/{filename_relativo.lstrip('/')}"
-            logger.info(f"Baixando arquivo correto: {file_url}")
-
-            file_resp = await page.request.get(file_url, timeout=300_000)
-            if not file_resp.ok:
-                raise Exception(f"Download falhou — status {file_resp.status}: {file_url}")
-
-            content_type = file_resp.headers.get("content-type", "")
-            ext = Path(filename_relativo).suffix or (
-                ".zip" if "zip" in content_type else ".csv" if "csv" in content_type else ".xlsx"
-            )
-            caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}{ext}"
-            caminho_arquivo.write_bytes(await file_resp.body())
-            logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+                        raise Exception("Campo 'filename' vazio no export.")
+                else:
+                    raise Exception("Nenhum export encontrado na API.")
 
         finally:
             await browser.close()
 
-    # 8. PROCESSAR COM PANDAS
+    # 9. PROCESSAR COM PANDAS
     logger.info("Processando arquivo...")
     sufixo = Path(caminho_arquivo).suffix.lower()
     if sufixo == ".zip":
