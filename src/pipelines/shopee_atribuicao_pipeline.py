@@ -2,9 +2,7 @@
 Pipeline ETL: Shopee Atribuição de Entrega
 Extract -> Transform -> Load para Neon (tabela: shopee_atribuicao)
 
-Estratégia de carga:
-- Primeira execução: replace (carga completa)
-- Execuções seguintes: upsert por id_da_at (mantém histórico)
+Estratégia de carga: replace (recria a tabela a cada execução)
 """
 import asyncio
 import pandas as pd
@@ -12,66 +10,11 @@ from datetime import datetime
 
 from src.utils import get_logger
 from src.extractors.shopee_atribuicao_crawler import extract_shopee_atribuicao
-from src.loader.neon_loader import load_to_neon, upsert_to_neon
-from sqlalchemy import create_engine, text
-from src.loader.neon_loader import create_neon_engine
+from src.loader.neon_loader import load_to_neon
 
 logger = get_logger(__name__)
 
 TABLE_NAME = "shopee_atribuicao"
-CONFLICT_COLUMNS = ["assignment_task_id"]
-
-
-def tabela_existe(table_name: str, schema: str = "public") -> bool:
-    engine = create_neon_engine()
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(text(f"""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables
-                    WHERE table_schema = '{schema}'
-                    AND table_name = '{table_name}'
-                );
-            """))
-            return result.scalar()
-    finally:
-        engine.dispose()
-
-
-def garantir_unique_constraint(table_name: str, column: str, schema: str = "public"):
-    constraint_name = f"{table_name}_{column}_key"
-    engine = create_neon_engine()
-    try:
-        with engine.connect() as conn:
-            existe = conn.execute(text(f"""
-                SELECT EXISTS (
-                    SELECT FROM pg_constraint
-                    WHERE conname = '{constraint_name}'
-                );
-            """)).scalar()
-            if not existe:
-                # Remove duplicatas mantendo a linha com maior ctid (mais recente)
-                deleted = conn.execute(text(f"""
-                    DELETE FROM {schema}.{table_name}
-                    WHERE ctid NOT IN (
-                        SELECT MAX(ctid)
-                        FROM {schema}.{table_name}
-                        GROUP BY {column}
-                    );
-                """))
-                rows_deleted = deleted.rowcount
-                if rows_deleted:
-                    logger.warning(f"{rows_deleted} linha(s) duplicadas removidas de {table_name}.{column} antes de criar o constraint.")
-                conn.execute(text(f"""
-                    ALTER TABLE {schema}.{table_name}
-                    ADD CONSTRAINT {constraint_name} UNIQUE ({column});
-                """))
-                conn.commit()
-                logger.info(f"UNIQUE constraint criada em {table_name}.{column}")
-            else:
-                logger.info(f"UNIQUE constraint já existe em {table_name}.{column}")
-    finally:
-        engine.dispose()
 
 
 async def run_pipeline(table_name: str = TABLE_NAME):
@@ -95,43 +38,22 @@ async def run_pipeline(table_name: str = TABLE_NAME):
 
         df["extracted_at"] = datetime.now()
 
-        # LOAD — primeira vez: replace; demais: upsert
+        # LOAD — replace sempre (recria a tabela com os tipos corretos)
         logger.info("\n📤 FASE 3: CARGA")
-        primeira_carga = not tabela_existe(table_name)
-
-        if not primeira_carga:
-            garantir_unique_constraint(table_name, CONFLICT_COLUMNS[0])
-
-        if primeira_carga:
-            logger.info("Primeira carga — criando tabela com replace...")
-            rows_inserted = load_to_neon(
-                df=df,
-                table_name=table_name,
-                schema="public",
-                if_exists="replace",
-            )
-            logger.info("Tabela criada. Próximas execuções usarão upsert.")
-        else:
-            # Verifica se a coluna de conflito existe no DataFrame
-            cols_conflito = [c for c in CONFLICT_COLUMNS if c in df.columns]
-            if not cols_conflito:
-                logger.warning(f"Coluna(s) {CONFLICT_COLUMNS} não encontrada(s) — usando append.")
-                rows_inserted = load_to_neon(df=df, table_name=table_name, schema="public", if_exists="append")
-            else:
-                logger.info(f"Upsert por: {cols_conflito}")
-                rows_inserted = upsert_to_neon(
-                    df=df,
-                    table_name=table_name,
-                    schema="public",
-                    conflict_columns=cols_conflito,
-                )
+        logger.info("Carregando com replace...")
+        rows_inserted = load_to_neon(
+            df=df,
+            table_name=table_name,
+            schema="public",
+            if_exists="replace",
+        )
 
         logger.info("\n" + "=" * 80)
         logger.info("✅ PIPELINE CONCLUÍDO COM SUCESSO!")
         logger.info(f"   - Linhas extraídas: {len(df)}")
         logger.info(f"   - Linhas afetadas: {rows_inserted}")
         logger.info(f"   - Tabela: {table_name}")
-        logger.info(f"   - Modo: {'replace (1ª carga)' if primeira_carga else 'upsert'}")
+        logger.info(f"   - Modo: replace")
         logger.info("=" * 80)
 
         return {
@@ -139,7 +61,7 @@ async def run_pipeline(table_name: str = TABLE_NAME):
             "extracted_rows": len(df),
             "inserted_rows": rows_inserted,
             "table": table_name,
-            "mode": "replace" if primeira_carga else "upsert",
+            "mode": "replace",
         }
 
     except Exception as e:
