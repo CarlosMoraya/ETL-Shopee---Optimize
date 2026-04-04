@@ -88,7 +88,22 @@ async def extract_shopee_driver_profile() -> Path:
             await page.goto(DRIVER_PROFILE_URL, wait_until="domcontentloaded", timeout=60_000)
             await page.wait_for_timeout(10_000)
 
-            # 3. AGUARDAR TABELA E CLICAR EM "PROCURAR"
+            # 3. ABRIR LOG PRIMEIRO para contar exports existentes ANTES de disparar
+            logger.info("Abrindo Log para contar exports anteriores...")
+            log_btn = page.locator('button:has-text("Log"), span:has-text("Log"), text=Log').first
+            await log_btn.wait_for(timeout=10_000)
+            await log_btn.click()
+            await page.wait_for_timeout(3_000)
+
+            botoes_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")')
+            count_antes = await botoes_baixar.count()
+            logger.info(f"Exports anteriores no Log: {count_antes}")
+
+            # 4. VOLTAR PARA A LISTA E CLICAR EM "PROCURAR"
+            logger.info(f"Voltando para lista: {DRIVER_PROFILE_URL}")
+            await page.goto(DRIVER_PROFILE_URL, wait_until="domcontentloaded", timeout=60_000)
+            await page.wait_for_timeout(10_000)
+
             logger.info("Aguardando tabela carregar...")
             await page.wait_for_selector(".ssc-react-pro-table-table", timeout=60_000)
             await page.wait_for_timeout(3_000)
@@ -103,7 +118,7 @@ async def extract_shopee_driver_profile() -> Path:
             except Exception as e:
                 logger.warning(f"Botão 'Procurar' não encontrado: {e}")
 
-            # 4. EXPORTAR (abre dropdown)
+            # 5. EXPORTAR (abre dropdown)
             logger.info("Clicando em 'Exportar'...")
             try:
                 botao_exportar = page.locator('button:has-text("Exportar")').first
@@ -116,7 +131,7 @@ async def extract_shopee_driver_profile() -> Path:
 
             await page.wait_for_timeout(2_000)
 
-            # 5. CLICAR NA OPÇÃO "EXPORTAR" DO DROPDOWN (segunda ocorrência)
+            # 6. CLICAR NA OPÇÃO "EXPORTAR" DO DROPDOWN (segunda ocorrência)
             logger.info("Clicando na opção 'Exportar' do dropdown...")
             opcao = page.locator('text=Exportar').nth(1)
             await opcao.wait_for(timeout=10_000)
@@ -124,69 +139,37 @@ async def extract_shopee_driver_profile() -> Path:
             logger.info("Exportação solicitada — aguardando processamento...")
             await page.wait_for_timeout(5_000)
 
-            # 6. ABRIR PAINEL/ABA DE HISTÓRICO DE EXPORTAÇÃO
-            # O botão "Baixar" só aparece depois de abrir o histórico correto
-            logger.info("Abrindo histórico de exportação...")
-            painel_aberto = False
-            for seletor, nome in [
-                ('button:has-text("Log")', "botão Log"),
-                ('span:has-text("Log")', "aba Log"),
-                ('text=Log', "texto Log"),
-                ('.anticon-file, .ssc-icon-file, [class*="task-icon"], svg[class*="file"]', "ícone de tarefas"),
-                ('text=Export History', "Export History"),
-                ('text=Histórico de Exportação', "Histórico de Exportação"),
-                ('.anticon-bell, .ssc-icon-bell, [class*="bell"]', "ícone de notificações"),
-            ]:
-                try:
-                    el = page.locator(seletor).first
-                    await el.wait_for(timeout=5_000)
-                    await el.click()
-                    logger.info(f"Painel aberto via: {nome}")
-                    await page.wait_for_timeout(3_000)
-                    painel_aberto = True
-                    break
-                except Exception:
-                    pass
+            # 7. VOLTAR AO LOG E AGUARDAR NOVO "BAIXAR"
+            logger.info("Abrindo Log para aguardar novo export...")
+            log_btn = page.locator('button:has-text("Log"), span:has-text("Log"), text=Log').first
+            await log_btn.wait_for(timeout=10_000)
+            await log_btn.click()
+            await page.wait_for_timeout(3_000)
 
-            if not painel_aberto:
-                logger.warning("Painel de histórico não encontrado — tentando localizar 'Baixar' diretamente")
-
-            # Screenshot imediatamente após abrir painel
-            await page.screenshot(path=str(output_path / "painel_aberto.png"), full_page=True)
-            logger.info("Screenshot do painel salvo: painel_aberto.png")
-
-            # Log do HTML do painel para ver o que está visível
-            html_painel = await page.content()
-            logger.info(f"HTML painel (últimos 3000 chars):\n{html_painel[-3000:]}")
-
-            # 7. AGUARDAR "BAIXAR"
-            logger.info("Aguardando botão 'Baixar' ficar disponível (até 120s)...")
+            logger.info(f"Aguardando novo export aparecer (count_antes={count_antes}, timeout=300s)...")
             caminho_arquivo = None
 
-            # Quantidade de botões Baixar ANTES de o novo export ficar pronto
-            botoes_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")')
-            count_antes = await botoes_baixar.count()
-            logger.info(f"Botões 'Baixar' já existentes no Log (exportações anteriores): {count_antes}")
-
-            for tentativa in range(120):
+            for tentativa in range(300):
                 await page.wait_for_timeout(1_000)
                 botoes_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")')
                 count = await botoes_baixar.count()
-                # Aguarda aparecer UM NOVO botão Baixar além dos que já existiam
                 if count > count_antes:
-                    logger.info(f"✅ Novo botão 'Baixar' disponível após {tentativa + 1}s! Total: {count}")
+                    logger.info(f"✅ Novo export disponível após {tentativa + 1}s! Botões: {count}")
                     break
-                if (tentativa + 1) % 15 == 0:
-                    logger.info(f"Aguardando processamento... ({tentativa + 1}/120s) — botões atuais: {count}")
+                if (tentativa + 1) % 30 == 0:
+                    logger.info(f"Aguardando... ({tentativa + 1}/300s) — botões: {count}")
                     await page.screenshot(path=str(output_path / f"aguardando_{tentativa+1}s.png"))
+                    # Recarrega a página do Log para atualizar a lista
+                    await page.reload(wait_until="domcontentloaded")
+                    await page.wait_for_timeout(3_000)
             else:
                 await page.screenshot(path=str(output_path / "erro_timeout_download.png"))
-                raise Exception("Timeout: novo export não ficou pronto em 120s.")
+                raise Exception("Timeout: novo export não apareceu em 300s.")
 
-            # 7. DOWNLOAD — clica no ÚLTIMO botão (o mais recente)
+            # 8. DOWNLOAD — clica no PRIMEIRO botão (mais recente, topo da lista)
             logger.info("Clicando em 'Baixar' no export mais recente...")
             async with page.expect_download(timeout=120_000) as download_info:
-                await botoes_baixar.last.click()
+                await botoes_baixar.first.click()
 
             download = await download_info.value
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
