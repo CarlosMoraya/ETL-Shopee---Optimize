@@ -213,6 +213,16 @@ async def extract_shopee_pnr() -> Path:
 
     logger.info(f"Linhas brutas: {len(df)} | Colunas: {len(df.columns)}")
 
+    # Extrair driver_id e nome do motorista (formato: "[123456] Nome do Motorista")
+    col_motorista = next((c for c in df.columns if "motorista" in c.lower() or "driver" in c.lower()), None)
+    if col_motorista:
+        logger.info(f"Extraindo driver_id da coluna '{col_motorista}'...")
+        extracao = df[col_motorista].astype(str).str.extract(r"\[(.*?)\]\s*(.*)")
+        df.insert(0, "driver_id", extracao[0].fillna(""))
+        df[col_motorista] = extracao[1].fillna(df[col_motorista])
+    else:
+        logger.warning("Coluna de motorista não encontrada — driver_id não extraído.")
+
     df.columns = (
         df.columns
         .str.replace("（", "(").str.replace("）", ")")
