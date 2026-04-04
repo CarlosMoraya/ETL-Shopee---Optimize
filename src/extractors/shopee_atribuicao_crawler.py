@@ -83,7 +83,29 @@ async def extract_shopee_atribuicao() -> Path:
             await senha_input.fill(senha)
 
             logger.info("Clicando no botão de login...")
-            botao_login = page.locator('button[type="submit"]').first
+            # Tentar múltiplos seletores para o botão de login
+            botao_login = None
+            for seletor in [
+                'button[type="submit"]',
+                'button.ssc-button',
+                'form button',
+                'button:has-text("Login")',
+                'button:has-text("Entrar")',
+            ]:
+                try:
+                    botao_login = page.locator(seletor).first
+                    await botao_login.wait_for(timeout=5_000)
+                    logger.info(f"Botão encontrado com seletor: {seletor}")
+                    break
+                except Exception:
+                    continue
+            
+            if not botao_login:
+                # Último recurso: usar XPath aproximado
+                botao_login = page.locator('xpath=//form//button').first
+                await botao_login.wait_for(timeout=10_000)
+                logger.info("Botão encontrado via XPath genérico")
+            
             await botao_login.click()
 
             logger.info("Aguardando portal carregar após login...")
