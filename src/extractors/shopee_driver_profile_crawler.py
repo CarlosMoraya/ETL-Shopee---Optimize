@@ -126,31 +126,55 @@ async def extract_shopee_driver_profile() -> Path:
             opcao = page.locator('text=Exportar').nth(1)
             await opcao.wait_for(timeout=10_000)
             await opcao.click()
-            logger.info("Exportação solicitada — popup 'Última tarefa' deve abrir com progresso...")
-            await page.wait_for_timeout(3_000)
+            logger.info("Exportação solicitada — aguardando 90s para processamento do servidor...")
+            await page.wait_for_timeout(90_000)
 
-            # 6. AGUARDAR NO POPUP ATÉ APARECER NOVO "BAIXAR" (export completo)
-            logger.info(f"Aguardando conclusão do export no popup (count_antes={count_antes}, timeout=300s)...")
-            caminho_arquivo = None
-
-            for tentativa in range(60):
-                await page.wait_for_timeout(5_000)
-                count = await botoes_baixar.count()
-                elapsed = (tentativa + 1) * 5
-                if count > count_antes:
-                    logger.info(f"✅ Novo export disponível após {elapsed}s! Botões: {count}")
+            # 6. ABRIR PAINEL "ÚLTIMA TAREFA" via ícone de tarefas no header
+            logger.info("Abrindo painel 'Última tarefa' via ícone de tarefas...")
+            painel_aberto = False
+            for tentativa_painel in range(4):
+                try:
+                    # Tenta o ícone de tarefas (div com classe icon próximo ao sino)
+                    icone = page.locator('div[data-v-13320df0].icon').first
+                    await icone.wait_for(timeout=5_000)
+                    await icone.click()
+                    await page.wait_for_timeout(3_000)
+                    await page.screenshot(path=str(output_path / f"painel_tentativa_{tentativa_painel}.png"))
+                    painel_aberto = True
+                    logger.info(f"✅ Painel aberto (tentativa {tentativa_painel + 1})")
                     break
-                if elapsed % 30 == 0:
-                    logger.info(f"Aguardando... ({elapsed}/300s) — botões visíveis: {count}")
-                    await page.screenshot(path=str(output_path / f"aguardando_{elapsed}s.png"))
-            else:
-                await page.screenshot(path=str(output_path / "erro_timeout_download.png"))
-                raise Exception("Timeout: novo export não apareceu em 300s.")
+                except Exception as e:
+                    logger.warning(f"Tentativa {tentativa_painel + 1} — ícone não encontrado: {e}")
+                    await page.wait_for_timeout(30_000)
 
-            # 8. DOWNLOAD — clica no PRIMEIRO botão (mais recente, topo da lista)
+            if not painel_aberto:
+                await page.screenshot(path=str(output_path / "erro_painel.png"))
+                raise Exception("Não foi possível abrir o painel 'Última tarefa'.")
+
+            # 7. AGUARDAR BOTÃO "BAIXAR" NO PAINEL (com retentativas de 30s)
+            logger.info("Aguardando botão 'Baixar' no painel...")
+            caminho_arquivo = None
+            botao_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")').first
+            encontrado = False
+            for tentativa_baixar in range(4):
+                try:
+                    await botao_baixar.wait_for(timeout=30_000)
+                    logger.info(f"✅ Botão 'Baixar' encontrado após {tentativa_baixar * 30}s adicionais!")
+                    encontrado = True
+                    break
+                except Exception:
+                    elapsed_extra = (tentativa_baixar + 1) * 30
+                    logger.info(f"Botão 'Baixar' não visível ainda — aguardando mais 30s ({elapsed_extra}s extra)...")
+                    await page.screenshot(path=str(output_path / f"aguardando_baixar_{elapsed_extra}s.png"))
+
+            if not encontrado:
+                await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
+                raise Exception("Timeout: botão 'Baixar' não apareceu no painel após 120s adicionais.")
+
+            # 8. DOWNLOAD — clica no PRIMEIRO botão "Baixar" (mais recente, topo do painel)
             logger.info("Clicando em 'Baixar' no export mais recente...")
             async with page.expect_download(timeout=120_000) as download_info:
-                await botoes_baixar.first.click()
+                await botao_baixar.click()
 
             download = await download_info.value
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
