@@ -138,16 +138,22 @@ async def extract_shopee_atribuicao() -> Path:
             # Verifica se abriu dropdown (segunda ocorrência)
             opcoes = page.locator('text=Exportar AT')
             count_opcoes = await opcoes.count()
+            logger.info(f"Ocorrências de 'Exportar AT' na página: {count_opcoes}")
             if count_opcoes > 1:
                 logger.info("Dropdown detectado — clicando na opção 'Exportar AT'...")
                 await opcoes.nth(1).click()
                 await page.wait_for_timeout(2_000)
+            else:
+                logger.info("Nenhum dropdown detectado — export já foi disparado pelo primeiro clique.")
 
+            await page.screenshot(path=str(output_path / "pos_exportar_at.png"))
             logger.info("Exportação solicitada — aguardando novo export ficar pronto (polling)...")
 
-            # 6. POLLING DO HISTORY API até aparecer novo task_id com status=2 (concluído)
+            # 6. POLLING DO HISTORY API até aparecer novo task_id
+            # Primeiro aguarda aparecer (qualquer status), depois aguarda status=2 (concluído)
             # Aguarda até 15 minutos (60 tentativas × 15s)
             novo_export = None
+            novo_task_id_em_andamento = None
             caminho_arquivo = None
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -158,10 +164,16 @@ async def extract_shopee_atribuicao() -> Path:
                     hist_resp = await page.request.get(HISTORY_URL, timeout=30_000)
                     hist_json = await hist_resp.json()
                     exports = hist_json.get("data", {}).get("exports", [])
-                    for exp in exports:
-                        if exp["task_id"] not in existing_task_ids and exp.get("status") == 2:
-                            novo_export = exp
-                            break
+                    novos = [e for e in exports if e["task_id"] not in existing_task_ids]
+                    if novos:
+                        logger.info(f"Novos exports detectados: {[(e['task_id'], e.get('status')) for e in novos]}")
+                        concluido = next((e for e in novos if e.get("status") == 2), None)
+                        if concluido:
+                            novo_export = concluido
+                        else:
+                            novo_task_id_em_andamento = novos[0]["task_id"]
+                    elif novo_task_id_em_andamento:
+                        logger.info(f"task_id {novo_task_id_em_andamento} ainda processando... {elapsed}s")
                 except Exception as e:
                     logger.warning(f"Erro ao consultar history ({elapsed}s): {e}")
 
