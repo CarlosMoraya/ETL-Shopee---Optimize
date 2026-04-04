@@ -196,20 +196,28 @@ async def extract_shopee_atribuicao() -> Path:
                     hist_resp = await page.request.get(HISTORY_URL, timeout=30_000)
                     hist_json = await hist_resp.json()
                     exports = hist_json.get("data", {}).get("exports", [])
+                    
+                    # Log da primeira resposta completa para debugging
+                    if tentativa == 0:
+                        logger.info(f"API response (todos os exports): {exports[:5]}...")
+                    
                     novos = [e for e in exports if e["task_id"] not in existing_task_ids]
                     if novos:
                         # Log de todos os status detectados para debugging
                         for e in novos:
                             status_detectados.add(e.get("status"))
                         
+                        # Log detalhado de novos exports
+                        logger.info(f"Novos exports detectados: {[{'task_id': e['task_id'], 'status': e.get('status'), 'filename': e.get('filename', '')} for e in novos]}")
+
                         # status == 2 = pronto, status == 1 = processando, status == 3 = falhou
                         concluido = next((e for e in novos if e.get("status") == 2), None)
                         falhou = next((e for e in novos if e.get("status") in [3, 4, 5]), None)
-                        
+
                         if falhou:
                             logger.error(f"❌ Export falhou com status={falhou.get('status')} — task_id={falhou['task_id']}")
                             raise Exception(f"Export falhou com status={falhou.get('status')} — task_id={falhou['task_id']}")
-                        
+
                         if concluido:
                             novo_export = concluido
                             logger.info(f"✅ Novo export pronto após {elapsed}s — task_id={novo_export['task_id']}")
@@ -218,6 +226,9 @@ async def extract_shopee_atribuicao() -> Path:
                     else:
                         if tentativa % 6 == 0:  # Log a cada ~60s
                             logger.info(f"Aguardando novo export... {elapsed}s decorridos")
+                            # Log dos últimos 3 exports existentes para ver se API está respondendo
+                            ultimos_3 = exports[:3] if len(exports) >= 3 else exports
+                            logger.info(f"Últimos exports conhecidos: {[(e.get('task_id'), e.get('status')) for e in ultimos_3]}")
                 except Exception as e:
                     logger.warning(f"Erro ao consultar history ({elapsed}s): {e}")
 
