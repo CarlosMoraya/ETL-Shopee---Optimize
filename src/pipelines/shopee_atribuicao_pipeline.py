@@ -50,6 +50,18 @@ def garantir_unique_constraint(table_name: str, column: str, schema: str = "publ
                 );
             """)).scalar()
             if not existe:
+                # Remove duplicatas mantendo a linha com maior ctid (mais recente)
+                deleted = conn.execute(text(f"""
+                    DELETE FROM {schema}.{table_name}
+                    WHERE ctid NOT IN (
+                        SELECT MAX(ctid)
+                        FROM {schema}.{table_name}
+                        GROUP BY {column}
+                    );
+                """))
+                rows_deleted = deleted.rowcount
+                if rows_deleted:
+                    logger.warning(f"{rows_deleted} linha(s) duplicadas removidas de {table_name}.{column} antes de criar o constraint.")
                 conn.execute(text(f"""
                     ALTER TABLE {schema}.{table_name}
                     ADD CONSTRAINT {constraint_name} UNIQUE ({column});
