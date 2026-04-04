@@ -150,38 +150,8 @@ async def extract_shopee_atribuicao() -> Path:
             await page.screenshot(path=str(output_path / "pagina_atribuicao.png"))
             logger.info("✅ Página de Atribuição de Entrega carregada.")
 
-            # 3. CLICAR NA TAB "TODOS"
-            logger.info("Clicando na tab 'Todos'...")
-            try:
-                # Tentar múltiplos seletores para a tab "Todos"
-                tab_todos = None
-                for seletor in [
-                    'text="Todos"',
-                    'a:has-text("Todos")',
-                    'button:has-text("Todos")',
-                    '.ant-tabs-tab:has-text("Todos")',
-                    '.nav-item:has-text("Todos")',
-                ]:
-                    try:
-                        tab_todos = page.locator(seletor).first
-                        await tab_todos.wait_for(timeout=5_000)
-                        logger.info(f"Tab encontrada com seletor: {seletor}")
-                        break
-                    except Exception:
-                        continue
-                
-                if tab_todos:
-                    await tab_todos.click()
-                    await page.wait_for_timeout(2_000)
-                    logger.info("✅ Tab 'Todos' clicada.")
-                else:
-                    logger.warning("Tab 'Todos' não encontrada — pode já estar selecionada.")
-            except Exception as e:
-                logger.warning(f"Erro ao clicar tab 'Todos': {e}")
-            
-            await page.screenshot(path=str(output_path / "pos_tab_todos.png"))
-
-            # 4. CLICAR NO DROPDOWN "TODOS" → "SELECT ALL IN ALL PAGES"
+            # 3. CLICAR NO DROPDOWN "TODOS" → "SELECT ALL IN ALL PAGES"
+            # A página já carrega na tab "Todos" por padrão, então pulamos essa etapa
             logger.info("Clicando no dropdown de seleção da tabela...")
             try:
                 # Pelo screenshot: o dropdown fica no header da tabela, próximo ao checkbox
