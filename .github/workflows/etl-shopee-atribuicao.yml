@@ -1,0 +1,48 @@
+name: ETL Shopee - Atribuição de Entrega (Diário)
+
+on:
+  schedule:
+    # Roda 1x ao dia às 06h00 BRT (= 09h UTC)
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  etl-shopee-atribuicao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: ''
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: Instalar browsers do Playwright
+        run: |
+          sudo apt-get install -y libasound2t64 2>/dev/null || true
+          playwright install chromium --with-deps
+
+      - name: Rodar Pipeline ETL
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          SHOPEE_EMAIL: ${{ secrets.SHOPEE_EMAIL }}
+          SHOPEE_PWD: ${{ secrets.SHOPEE_PWD }}
+        run: |
+          python -m src.pipelines.shopee_atribuicao_pipeline
+
+      - name: Upload de artifacts (em caso de erro)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erro-atribuicao
+          path: data/raw/
+          retention-days: 7
