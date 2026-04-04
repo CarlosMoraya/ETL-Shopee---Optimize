@@ -150,59 +150,63 @@ async def extract_shopee_atribuicao() -> Path:
             await page.screenshot(path=str(output_path / "pagina_atribuicao.png"))
             logger.info("✅ Página de Atribuição de Entrega carregada.")
 
-            # 3. CLICAR NO DROPDOWN "TODOS" → "SELECT ALL IN ALL PAGES"
-            # A página já carrega na tab "Todos" por padrão, então pulamos essa etapa
-            logger.info("Clicando no dropdown de seleção da tabela...")
+            # 3. SELECIONAR TODOS OS REGISTROS
+            # Pelo screenshot: clicar no checkbox do header da tabela para abrir dropdown
+            logger.info("Selecionando todos os registros...")
             try:
-                # Pelo screenshot: o dropdown fica no header da tabela, próximo ao checkbox
-                # Tentar múltiplos seletores
-                dropdown_todos = None
+                # Aguardar a tabela carregar completamente
+                await page.locator('table').first.wait_for(timeout=20_000)
+                await page.wait_for_timeout(3_000)
+                
+                # Clicar no checkbox do header (canto superior esquerdo da tabela)
+                # Tentar múltiplas abordagens
+                checkbox_header = None
                 for seletor in [
-                    '.ssc-react-table-selection-menu-trigger',
-                    '.table-selection-trigger',
-                    'div[role="button"]:has(svg)',
-                    'span:has(svg).ant-dropdown-trigger',
-                    '.ant-table-selection-col .ant-dropdown-trigger',
+                    '.ant-table-selection-col input[type="checkbox"]',
+                    'thead input[type="checkbox"]',
+                    'th input[type="checkbox"]',
+                    'table thead th:first-child input',
+                    'div.ant-table-thead input[type="checkbox"]',
                 ]:
                     try:
-                        dropdown_todos = page.locator(seletor).first
-                        await dropdown_todos.wait_for(timeout=5_000)
-                        logger.info(f"Dropdown encontrado com seletor: {seletor}")
+                        checkbox_header = page.locator(seletor).first
+                        await checkbox_header.wait_for(timeout=5_000)
+                        logger.info(f"Checkbox do header encontrado: {seletor}")
                         break
                     except Exception:
                         continue
                 
-                if dropdown_todos:
-                    await dropdown_todos.click()
-                    await page.wait_for_timeout(1_000)
+                if checkbox_header:
+                    await checkbox_header.click()
+                    await page.wait_for_timeout(2_000)
                     
+                    # Agora clicar em "Select All in All Pages"
                     logger.info("Clicando em 'Select All in All Pages'...")
-                    opcao_all_pages = page.locator('text="Select All in All Pages"').first
-                    await opcao_all_pages.click()
+                    opcao_all = page.locator('text="Select All in All Pages"').first
+                    await opcao_all.click(timeout=10_000)
                     await page.wait_for_timeout(3_000)
-                    logger.info("✅ 'Select All in All Pages' selecionado.")
+                    logger.info("✅ Todos os registros selecionados.")
                 else:
-                    logger.warning("Dropdown não encontrado — pulando seleção.")
+                    logger.warning("Checkbox do header não encontrado — pulando seleção.")
             except Exception as e:
                 logger.warning(f"Erro ao selecionar todos: {e}")
-                await page.screenshot(path=str(output_path / "erro_select_all.png"))
             
             await page.screenshot(path=str(output_path / "pos_select_all.png"))
 
-            # 5. CLICAR EM "EXPORTAR AT"
+            # 4. CLICAR EM "EXPORTAR AT"
             logger.info("Clicando em 'Exportar AT'...")
             botao_exportar = None
             for seletor in [
                 'button:has-text("Exportar AT")',
-                'button.ssc-button:has-text("Exportar")',
-                '.ant-btn:has-text("Exportar AT")',
-                'div[role="button"]:has-text("Exportar AT")',
-                'button:has-text("Exportar")',
+                'text="Exportar AT"',
+                'button.ssc-button >> text="Exportar AT"',
+                'div >> text="Exportar AT"',
+                'button >> text="Exportar"',
             ]:
                 try:
                     botao_exportar = page.locator(seletor).first
                     await botao_exportar.wait_for(timeout=5_000)
-                    logger.info(f"Botão Exportar AT encontrado com seletor: {seletor}")
+                    logger.info(f"Botão Exportar AT encontrado: {seletor}")
                     break
                 except Exception:
                     continue
@@ -211,9 +215,25 @@ async def extract_shopee_atribuicao() -> Path:
                 await botao_exportar.click()
                 logger.info("✅ Botão 'Exportar AT' clicado.")
             else:
-                logger.error("Botão 'Exportar AT' não encontrado!")
-                await page.screenshot(path=str(output_path / "erro_botao_exportar.png"))
-                raise Exception("Botão 'Exportar AT' não encontrado na página.")
+                # Fallback: buscar pelo botão usando avaliação JavaScript
+                logger.info("Tentando encontrar botão via JavaScript...")
+                try:
+                    await page.evaluate("""() => {
+                        const buttons = document.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            if (btn.textContent.includes('Exportar AT')) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }""")
+                    await page.wait_for_timeout(2_000)
+                    logger.info("✅ Botão 'Exportar AT' clicado via JavaScript.")
+                except Exception as e:
+                    logger.error(f"Erro ao clicar botão: {e}")
+                    await page.screenshot(path=str(output_path / "erro_botao_exportar.png"))
+                    raise Exception("Botão 'Exportar AT' não encontrado.")
 
             # Tratar modal de confirmação, se aparecer
             await page.wait_for_timeout(2_000)
