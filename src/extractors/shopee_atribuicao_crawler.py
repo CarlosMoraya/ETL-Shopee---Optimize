@@ -246,6 +246,17 @@ async def extract_shopee_atribuicao() -> Path:
                     await icone.wait_for(timeout=5_000)
                     await icone.click()
                     await page.wait_for_timeout(3_000)
+                    
+                    # Clicar em "Ver tudo" para abrir Export Task Center
+                    logger.info("Clicando em 'Ver tudo'...")
+                    try:
+                        ver_tudo = page.locator('button:has-text("Ver tudo")').first
+                        await ver_tudo.wait_for(timeout=10_000)
+                        await ver_tudo.click()
+                        await page.wait_for_timeout(3_000)
+                    except Exception as e:
+                        logger.warning(f"'Ver tudo' não encontrado: {e}")
+                    
                     await page.screenshot(path=str(output_path / f"painel_tentativa_{tentativa_painel}.png"))
                     painel_aberto = True
                     logger.info(f"✅ Painel aberto (tentativa {tentativa_painel + 1})")
