@@ -162,31 +162,22 @@ async def extract_shopee_atribuicao() -> Path:
             if not novo_export:
                 raise Exception("Timeout: novo export não ficou pronto em 15 minutos.")
 
-            # 7. ABRIR PAINEL E CLICAR "BAIXAR" para capturar o download
+            # 7. ABRIR PAINEL → VER TUDO → BAIXAR PRIMEIRO REGISTRO
             logger.info("Abrindo painel 'Última tarefa' via ícone...")
-            try:
-                icone = page.locator('div[data-v-13320df0].icon').first
-                await icone.wait_for(timeout=10_000)
-                await icone.click()
-                await page.wait_for_timeout(3_000)
-            except Exception as e:
-                logger.warning(f"Painel já aberto ou ícone não encontrado: {e}")
+            icone = page.locator('div[data-v-13320df0].icon').first
+            await icone.wait_for(timeout=10_000)
+            await icone.click()
+            await page.wait_for_timeout(2_000)
 
-            logger.info("Clicando em 'Baixar' no export mais recente...")
-            all_request_urls = []
+            logger.info("Clicando em 'Ver tudo'...")
+            ver_tudo = page.locator('button:has-text("Ver tudo")').first
+            await ver_tudo.wait_for(timeout=10_000)
+            await ver_tudo.click()
+            await page.wait_for_timeout(3_000)
+            await page.screenshot(path=str(output_path / "export_task_center.png"))
+            logger.info("✅ Página de histórico de exports carregada.")
 
-            def on_any_request(req):
-                all_request_urls.append((req.resource_type, req.url))
-
-            page.on("request", on_any_request)
-            botao_baixar = page.locator('button:has-text("Baixar")').first
-            await botao_baixar.wait_for(timeout=15_000)
-            await botao_baixar.click()
-            await page.wait_for_timeout(5_000)
-            page.remove_listener("request", on_any_request)
-
-            # O clique em "Baixar" faz XHR ao history e inicia download pelo browser
-            # Usamos o filename já capturado pelo polling para baixar diretamente
+            # Usa o filename capturado pelo polling para baixar diretamente
             filename_relativo = novo_export.get("filename", "")
             if not filename_relativo:
                 raise Exception(f"Campo 'filename' vazio no export: {novo_export}")
