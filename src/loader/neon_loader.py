@@ -167,7 +167,13 @@ def upsert_to_neon(
     try:
         # Criar tabela temporária
         temp_table = f"{table_name}_temp"
-        
+
+        # Deduplicar pelo(s) conflict_column(s) — mantém última ocorrência
+        antes = len(df)
+        df = df.drop_duplicates(subset=conflict_columns, keep="last")
+        if len(df) < antes:
+            logger.warning(f"{antes - len(df)} linha(s) duplicadas removidas do DataFrame antes do upsert.")
+
         # Inserir dados na temporária
         df.to_sql(
             name=temp_table,
