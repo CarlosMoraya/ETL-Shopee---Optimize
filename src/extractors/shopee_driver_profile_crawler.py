@@ -149,18 +149,22 @@ async def extract_shopee_driver_profile() -> Path:
             logger.info(f"Aguardando novo export aparecer (count_antes={count_antes}, timeout=300s)...")
             caminho_arquivo = None
 
-            for tentativa in range(300):
-                await page.wait_for_timeout(1_000)
+            for tentativa in range(60):
+                await page.wait_for_timeout(5_000)
                 botoes_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")')
                 count = await botoes_baixar.count()
                 if count > count_antes:
-                    logger.info(f"✅ Novo export disponível após {tentativa + 1}s! Botões: {count}")
+                    logger.info(f"✅ Novo export disponível após {(tentativa + 1) * 5}s! Botões: {count}")
                     break
-                if (tentativa + 1) % 30 == 0:
-                    logger.info(f"Aguardando... ({tentativa + 1}/300s) — botões: {count}")
-                    await page.screenshot(path=str(output_path / f"aguardando_{tentativa+1}s.png"))
-                    # Recarrega a página do Log para atualizar a lista
-                    await page.reload(wait_until="domcontentloaded")
+                if (tentativa + 1) % 6 == 0:
+                    logger.info(f"Aguardando... ({(tentativa + 1) * 5}/300s) — botões: {count}")
+                    await page.screenshot(path=str(output_path / f"aguardando_{(tentativa+1)*5}s.png"))
+                    # Renavegar para o Log (reload fecha o painel no SPA)
+                    await page.goto(DRIVER_PROFILE_URL, wait_until="domcontentloaded", timeout=60_000)
+                    await page.wait_for_timeout(3_000)
+                    log_btn = page.locator('button:has-text("Log"), span:has-text("Log")').first
+                    await log_btn.wait_for(timeout=10_000)
+                    await log_btn.click()
                     await page.wait_for_timeout(3_000)
             else:
                 await page.screenshot(path=str(output_path / "erro_timeout_download.png"))
