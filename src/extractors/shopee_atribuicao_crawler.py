@@ -92,17 +92,22 @@ async def extract_shopee_atribuicao() -> Path:
             await page.screenshot(path=str(output_path / "pagina_carregada.png"))
             logger.info("✅ Página de Atribuição de Entrega carregada.")
 
-            # 3. FLEGAR TODAS AS ESTAÇÕES (checkbox select-all no header da tabela)
-            logger.info("Clicando no checkbox 'Selecionar tudo'...")
+            # 3. SELECIONAR TODAS AS PÁGINAS via dropdown de seleção
+            logger.info("Clicando no dropdown de seleção (seta SVG)...")
             try:
-                checkbox_all = page.locator('input.ssc-react-checkbox-input[type="checkbox"]').first
-                await checkbox_all.wait_for(timeout=20_000)
-                await checkbox_all.click()
+                seta_dropdown = page.locator('svg[viewBox="0 0 17 16"]').first
+                await seta_dropdown.wait_for(timeout=20_000)
+                await seta_dropdown.click()
+                await page.wait_for_timeout(1_500)
+                logger.info("Clicando em 'Select All in All Pages'...")
+                opcao_all_pages = page.locator('.ssc-react-table-selection-menu-item', has_text="Select All in All Pages")
+                await opcao_all_pages.wait_for(timeout=10_000)
+                await opcao_all_pages.click()
                 await page.wait_for_timeout(2_000)
-                logger.info("✅ Todas as estações selecionadas.")
+                logger.info("✅ 'Select All in All Pages' selecionado.")
             except Exception as e:
-                logger.warning(f"Checkbox não encontrado, continuando sem selecionar: {e}")
-                await page.screenshot(path=str(output_path / "erro_checkbox.png"))
+                logger.warning(f"Dropdown de seleção não encontrado: {e}")
+                await page.screenshot(path=str(output_path / "erro_select_all_pages.png"))
 
             # 4. CLICAR EM "EXPORTAR AT"
             logger.info("Clicando em 'Exportar AT'...")
