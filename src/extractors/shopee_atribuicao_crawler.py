@@ -137,21 +137,17 @@ async def extract_shopee_atribuicao() -> Path:
             }
             logger.info(f"Task IDs existentes: {existing_task_ids}")
 
-            # 5. DISPARAR EXPORT — interceptar rede para descobrir endpoint correto
-            logger.info("Configurando interceptação de rede para capturar request de export...")
-            export_requests = []
+            # 5. DISPARAR EXPORT — capturar TODOS os requests
+            logger.info("Configurando interceptação de TODOS os requests...")
+            all_requests = []
             
             async def on_request(request):
-                if "export" in request.url.lower() or "assignment_task" in request.url.lower():
-                    export_requests.append({
-                        "url": request.url,
-                        "method": request.method,
-                        "headers": dict(request.headers),
-                        "post_data": request.post_data
-                    })
-                    logger.info(f"🔍 CAPTURADO: {request.method} {request.url}")
-                    if request.post_data:
-                        logger.info(f"   POST data: {request.post_data[:500]}")
+                all_requests.append({
+                    "url": request.url,
+                    "method": request.method,
+                    "resource_type": request.resource_type,
+                    "post_data": request.post_data[:500] if request.post_data else None
+                })
             
             page.on("request", on_request)
             
@@ -159,7 +155,7 @@ async def extract_shopee_atribuicao() -> Path:
             botao_exportar = page.locator('button:has-text("Exportar AT")').first
             await botao_exportar.wait_for(timeout=10_000)
             await botao_exportar.click()
-            await page.wait_for_timeout(5_000)
+            await page.wait_for_timeout(8_000)
 
             # Tratar modal de confirmação, se aparecer
             for seletor_confirmar in [
@@ -176,22 +172,30 @@ async def extract_shopee_atribuicao() -> Path:
                     if await btn.is_visible():
                         logger.info(f"Modal de confirmação detectado — clicando '{seletor_confirmar}'")
                         await btn.click()
-                        await page.wait_for_timeout(3_000)
+                        await page.wait_for_timeout(5_000)
                         break
                 except Exception:
                     pass
 
-            await page.wait_for_timeout(3_000)
+            await page.wait_for_timeout(5_000)
             
             # Parar interceptação
             page.remove_listener("request", on_request)
             
-            # Log de todos os requests capturados
-            logger.info(f"Requests capturados relacionados a export: {len(export_requests)}")
-            for i, req in enumerate(export_requests):
-                logger.info(f"  [{i}] {req['method']} {req['url']}")
+            # Log de TODOS os requests
+            logger.info(f"TOTAL de requests capturados: {len(all_requests)}")
+            for i, req in enumerate(all_requests):
+                logger.info(f"  [{i}] {req['method']} {req['url']} (type={req['resource_type']})")
                 if req.get('post_data'):
-                    logger.info(f"       POST data: {req['post_data'][:300]}")
+                    logger.info(f"       POST: {req['post_data'][:300]}")
+            
+            # Filtrar apenas requests XHR/fetch (API calls)
+            api_requests = [r for r in all_requests if r['resource_type'] in ('xhr', 'fetch')]
+            logger.info(f"Requests de API (XHR/fetch): {len(api_requests)}")
+            for req in api_requests:
+                logger.info(f"  → {req['method']} {req['url']}")
+                if req.get('post_data'):
+                    logger.info(f"     Payload: {req['post_data']}")
             
             await page.screenshot(path=str(output_path / "pos_exportar_at.png"))
 
@@ -208,37 +212,27 @@ async def extract_shopee_atribuicao() -> Path:
                 logger.info(f"✅ Export criado via clique: {novos_pos_clique[0]}")
             else:
                 logger.error("❌ Falha ao criar export — nenhum novo task_id detectado após clique no botão.")
-                if export_requests:
-                    logger.error("Requests capturados que deveriam ter criado o export:")
-                    for req in export_requests:
-                        logger.error(f"  → {req['method']} {req['url']}")
-                        if req.get('post_data'):
-                            logger.error(f"     Payload: {req['post_data']}")
-                else:
-                    logger.error("NENHUM request de export foi capturado — o botão pode não estar funcionando.")
-                    logger.error("Tentando clicar novamente com force=True...")
-                    try:
-                        botao_exportar2 = page.locator('button:has-text("Exportar AT")').first
-                        await botao_exportar2.click(force=True)
-                        await page.wait_for_timeout(5_000)
-                        
-                        # Verificar novamente
-                        hist_pos_clique2 = await page.request.get(HISTORY_URL, timeout=30_000)
-                        hist_pos_clique2_json = await hist_pos_clique2.json()
-                        exports_pos_clique2 = hist_pos_clique2_json.get("data", {}).get("exports", [])
-                        novos_pos_clique2 = [e for e in exports_pos_clique2 if e["task_id"] not in existing_task_ids]
-                        
-                        if len(novos_pos_clique2) > 0:
-                            logger.info(f"✅ Export criado após segundo clique: {novos_pos_clique2[0]}")
-                            export_criado = True
-                        else:
-                            logger.error("Segundo clique também não criou export.")
-                    except Exception as e:
-                        logger.error(f"Erro no segundo clique: {e}")
+                logger.error(f"Total de requests capturados: {len(all_requests)}, API requests: {len(api_requests)}")
                 
-                if not export_criado:
-                    await page.screenshot(path=str(output_path / "erro_export_falhado.png"))
-                    raise Exception("Falha ao criar export: botão não gerou novo task_id.")
+                if not api_requests:
+                    logger.error("NENHUM request de API foi capturado!")
+                    logger.error("Possíveis causas:")
+                    logger.error("  1. Botão não está sendo clicado corretamente")
+                    logger.error("  2. JavaScript da página está com erro")
+                    logger.error("  3. Página precisa de interação adicional")
+                    
+                    # Tentar avaliar JavaScript da página
+                    logger.info("Avaliando estado da página via JavaScript...")
+                    try:
+                        page_title = await page.title()
+                        logger.info(f"Título da página: {page_title}")
+                        current_url = page.url
+                        logger.info(f"URL atual: {current_url}")
+                    except Exception as e:
+                        logger.error(f"Erro ao avaliar página: {e}")
+                
+                await page.screenshot(path=str(output_path / "erro_export_falhado.png"))
+                raise Exception("Falha ao criar export: botão não gerou novo task_id. Verifique logs de requests.")
 
             # 6. ABRIR PAINEL → VER TUDO (navegação como humano)
             logger.info("Abrindo painel 'Última tarefa' via ícone...")
