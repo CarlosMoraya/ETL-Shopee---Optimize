@@ -238,15 +238,56 @@ async def extract_shopee_atribuicao() -> Path:
                     None,
                 )
                 if dl_url:
-                    logger.info(f"Tentando download manual: {dl_url}")
-                    api_resp = await page.request.get(dl_url, timeout=300_000)
+                    # A URL capturada pode ser um endpoint de API que retorna JSON com a URL real do arquivo
+                    logger.info(f"Consultando endpoint: {dl_url}")
+                    api_resp = await page.request.get(dl_url, timeout=30_000)
                     if not api_resp.ok:
-                        raise Exception(f"Download manual falhou — status {api_resp.status}: {dl_url}")
+                        raise Exception(f"Endpoint falhou — status {api_resp.status}: {dl_url}")
+
                     content_type = api_resp.headers.get("content-type", "")
-                    ext = ".zip" if "zip" in content_type else ".csv" if "csv" in content_type else ".xlsx"
-                    caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}{ext}"
-                    caminho_arquivo.write_bytes(await api_resp.body())
-                    logger.info(f"✅ Arquivo baixado manualmente: {caminho_arquivo}")
+                    logger.info(f"Content-Type da resposta: {content_type}")
+
+                    if "json" in content_type:
+                        # É JSON — procura a URL real do arquivo dentro da resposta
+                        resp_json = await api_resp.json()
+                        logger.info(f"Resposta JSON: {str(resp_json)[:500]}")
+
+                        # Busca recursiva por campos que contêm URL de download
+                        def encontrar_url(obj, keys=("url", "download_url", "file_url", "link", "file_path", "path")):
+                            if isinstance(obj, dict):
+                                for k in keys:
+                                    if k in obj and isinstance(obj[k], str) and obj[k].startswith("http"):
+                                        return obj[k]
+                                for v in obj.values():
+                                    result = encontrar_url(v, keys)
+                                    if result:
+                                        return result
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    result = encontrar_url(item, keys)
+                                    if result:
+                                        return result
+                            return None
+
+                        file_url = encontrar_url(resp_json)
+                        if not file_url:
+                            raise Exception(f"URL de arquivo não encontrada no JSON: {resp_json}")
+
+                        logger.info(f"URL real do arquivo: {file_url}")
+                        file_resp = await page.request.get(file_url, timeout=300_000)
+                        if not file_resp.ok:
+                            raise Exception(f"Download do arquivo falhou — status {file_resp.status}")
+                        content_type = file_resp.headers.get("content-type", "")
+                        ext = ".zip" if "zip" in content_type else ".csv" if "csv" in content_type else ".xlsx"
+                        caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}{ext}"
+                        caminho_arquivo.write_bytes(await file_resp.body())
+                        logger.info(f"✅ Arquivo baixado via JSON: {caminho_arquivo}")
+                    else:
+                        # Resposta já é o arquivo direto
+                        ext = ".zip" if "zip" in content_type else ".csv" if "csv" in content_type else ".xlsx"
+                        caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}{ext}"
+                        caminho_arquivo.write_bytes(await api_resp.body())
+                        logger.info(f"✅ Arquivo baixado diretamente: {caminho_arquivo}")
                 else:
                     raise Exception(
                         "Timeout: nem evento de download nem URL de download capturados. "
