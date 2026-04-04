@@ -90,7 +90,7 @@ async def extract_shopee_driver_profile() -> Path:
 
             # 3. ABRIR LOG PRIMEIRO para contar exports existentes ANTES de disparar
             logger.info("Abrindo Log para contar exports anteriores...")
-            log_btn = page.locator('button:has-text("Log"), span:has-text("Log"), text=Log').first
+            log_btn = page.locator('button:has-text("Log"), span:has-text("Log")').first
             await log_btn.wait_for(timeout=10_000)
             await log_btn.click()
             await page.wait_for_timeout(3_000)
@@ -141,7 +141,7 @@ async def extract_shopee_driver_profile() -> Path:
 
             # 7. VOLTAR AO LOG E AGUARDAR NOVO "BAIXAR"
             logger.info("Abrindo Log para aguardar novo export...")
-            log_btn = page.locator('button:has-text("Log"), span:has-text("Log"), text=Log').first
+            log_btn = page.locator('button:has-text("Log"), span:has-text("Log")').first
             await log_btn.wait_for(timeout=10_000)
             await log_btn.click()
             await page.wait_for_timeout(3_000)
