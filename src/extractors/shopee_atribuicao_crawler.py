@@ -176,7 +176,7 @@ async def extract_shopee_atribuicao() -> Path:
             XPATH_BAIXAR = (
                 '//*[@id="agency-container"]/div[2]/div[2]/div[2]/div/div/div[1]'
                 '/div[8]/div/div[1]/div/div[2]/div[1]/div[1]/div[2]/div/div/div'
-                '/table/tbody[2]/tr[1]/td[7]/div/div/button/span/span'
+                '/table/tbody[2]/tr[1]/td[7]/div/div/button'
             )
             botao_baixar = page.locator(f'xpath={XPATH_BAIXAR}').first
             await botao_baixar.wait_for(timeout=15_000)
