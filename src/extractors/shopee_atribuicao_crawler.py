@@ -260,18 +260,39 @@ async def extract_shopee_atribuicao() -> Path:
 
             # 6. AGUARDAR BOTÃO "BAIXAR" NO PAINEL
             logger.info("Aguardando botão 'Baixar' no painel...")
-            botao_baixar = page.locator('button:has-text("Baixar")').first
+            
+            # O painel pode precisar de scroll ou o botão pode estar em outra posição
+            # Tentar múltiplos seletores
+            botao_baixar = None
             encontrado = False
+            
             for tentativa_baixar in range(4):
                 try:
-                    await botao_baixar.wait_for(timeout=30_000)
-                    logger.info(f"✅ Botão 'Baixar' encontrado após {tentativa_baixar * 30}s adicionais!")
-                    encontrado = True
-                    break
+                    # Tentar múltiplos seletores para o botão Baixar
+                    for seletor in [
+                        'button:has-text("Baixar")',
+                        'button.ssc-button:has-text("Baixar")',
+                        'button.ssc-react-button:has-text("Baixar")',
+                        'div >> text="Baixar"',
+                    ]:
+                        try:
+                            botao_baixar = page.locator(seletor).first
+                            await botao_baixar.wait_for(timeout=10_000)
+                            logger.info(f"Botão 'Baixar' encontrado com: {seletor}")
+                            encontrado = True
+                            break
+                        except Exception:
+                            continue
+                    
+                    if encontrado:
+                        break
                 except Exception:
-                    elapsed_extra = (tentativa_baixar + 1) * 30
-                    logger.info(f"Botão 'Baixar' não visível ainda — aguardando mais 30s ({elapsed_extra}s extra)...")
-                    await page.screenshot(path=str(output_path / f"aguardando_baixar_{elapsed_extra}s.png"))
+                    pass
+                
+                elapsed_extra = (tentativa_baixar + 1) * 30
+                logger.info(f"Botão 'Baixar' não visível ainda — aguardando mais 30s ({elapsed_extra}s extra)...")
+                await page.screenshot(path=str(output_path / f"aguardando_baixar_{elapsed_extra}s.png"))
+                await page.wait_for_timeout(30_000)
 
             if not encontrado:
                 await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
