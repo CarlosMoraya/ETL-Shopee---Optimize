@@ -119,7 +119,7 @@ async def extract_shopee_atribuicao() -> Path:
                 await opcao_all_pages.click(force=True)
                 await page.wait_for_timeout(2_000)
                 logger.info("✅ 'Select All in All Pages' selecionado.")
-                await page.wait_for_timeout(10_000)
+                await page.wait_for_timeout(20_000)
             except Exception as e:
                 logger.warning(f"Dropdown de seleção não encontrado: {e}")
                 await page.screenshot(path=str(output_path / "erro_select_all_pages.png"))
