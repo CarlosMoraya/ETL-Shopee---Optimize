@@ -57,6 +57,7 @@ async def extract_shopee_atribuicao() -> Path:
             ),
             locale="pt-BR",
             viewport={"width": 1920, "height": 1080},
+            accept_downloads=True,
         )
         page = await context.new_page()
 
@@ -181,37 +182,76 @@ async def extract_shopee_atribuicao() -> Path:
                 raise Exception("Timeout: botão 'Baixar' não apareceu no painel após 240s adicionais.")
 
             # 7. DOWNLOAD
-            # Registra handler no nível do contexto para capturar downloads
-            # tanto da página atual quanto de popups/novas abas abertas pelo botão Baixar
+            # Estratégia dual: espera evento de download (60s) + fallback de download manual via URL
             logger.info("Clicando em 'Baixar' no export mais recente...")
             download_holder = {"value": None}
             download_ready = asyncio.Event()
+            all_request_urls = []
 
-            async def handle_download(dl):
+            async def on_download_event(dl):
                 if not download_ready.is_set():
                     download_holder["value"] = dl
                     download_ready.set()
+                    logger.info(f"Evento download capturado: {dl.suggested_filename}")
 
-            async def handle_new_page(new_page):
-                new_page.once("download", handle_download)
+            def on_any_request(req):
+                all_request_urls.append((req.resource_type, req.url))
 
-            page.once("download", handle_download)
-            context.on("page", handle_new_page)
+            async def on_new_page(np):
+                np.once("download", on_download_event)
+                np.on("request", on_any_request)
+
+            page.once("download", on_download_event)
+            context.on("page", on_new_page)
+            page.on("request", on_any_request)
 
             await botao_baixar.click()
+            await page.wait_for_timeout(5_000)
+            await page.screenshot(path=str(output_path / "pos_clique_baixar.png"))
 
+            # Aguarda evento de download por 60s
             try:
-                await asyncio.wait_for(download_ready.wait(), timeout=300)
+                await asyncio.wait_for(download_ready.wait(), timeout=60)
             except asyncio.TimeoutError:
-                raise Exception("Timeout 300s aguardando evento de download — verifique se o servidor gerou o arquivo.")
+                pass
             finally:
-                context.remove_listener("page", handle_new_page)
+                context.remove_listener("page", on_new_page)
+                page.remove_listener("request", on_any_request)
 
-            download = download_holder["value"]
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}_{download.suggested_filename}"
-            await download.save_as(str(caminho_arquivo))
-            logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+
+            if download_ready.is_set():
+                # Caminho feliz: evento de download capturado
+                download = download_holder["value"]
+                caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}_{download.suggested_filename}"
+                await download.save_as(str(caminho_arquivo))
+                logger.info(f"✅ Arquivo baixado via evento: {caminho_arquivo}")
+            else:
+                # Fallback: tenta baixar manualmente via URL capturada
+                logger.info(f"Evento não capturado. Requests após clique ({len(all_request_urls)}):")
+                for rtype, url in all_request_urls[-30:]:
+                    logger.info(f"  [{rtype}] {url}")
+
+                dl_url = next(
+                    (url for rtype, url in reversed(all_request_urls)
+                     if any(kw in url.lower() for kw in ['download', 'export', '.csv', '.xlsx', '.zip', 'file'])),
+                    None,
+                )
+                if dl_url:
+                    logger.info(f"Tentando download manual: {dl_url}")
+                    api_resp = await page.request.get(dl_url, timeout=300_000)
+                    if not api_resp.ok:
+                        raise Exception(f"Download manual falhou — status {api_resp.status}: {dl_url}")
+                    content_type = api_resp.headers.get("content-type", "")
+                    ext = ".zip" if "zip" in content_type else ".csv" if "csv" in content_type else ".xlsx"
+                    caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}{ext}"
+                    caminho_arquivo.write_bytes(await api_resp.body())
+                    logger.info(f"✅ Arquivo baixado manualmente: {caminho_arquivo}")
+                else:
+                    raise Exception(
+                        "Timeout: nem evento de download nem URL de download capturados. "
+                        f"Requests detectadas: {[u for _, u in all_request_urls[-10:]]}"
+                    )
 
         finally:
             await browser.close()
