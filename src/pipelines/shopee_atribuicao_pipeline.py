@@ -38,6 +38,30 @@ def tabela_existe(table_name: str, schema: str = "public") -> bool:
         engine.dispose()
 
 
+def garantir_unique_constraint(table_name: str, column: str, schema: str = "public"):
+    constraint_name = f"{table_name}_{column}_key"
+    engine = create_neon_engine()
+    try:
+        with engine.connect() as conn:
+            existe = conn.execute(text(f"""
+                SELECT EXISTS (
+                    SELECT FROM pg_constraint
+                    WHERE conname = '{constraint_name}'
+                );
+            """)).scalar()
+            if not existe:
+                conn.execute(text(f"""
+                    ALTER TABLE {schema}.{table_name}
+                    ADD CONSTRAINT {constraint_name} UNIQUE ({column});
+                """))
+                conn.commit()
+                logger.info(f"UNIQUE constraint criada em {table_name}.{column}")
+            else:
+                logger.info(f"UNIQUE constraint já existe em {table_name}.{column}")
+    finally:
+        engine.dispose()
+
+
 async def run_pipeline(table_name: str = TABLE_NAME):
     logger.info("=" * 80)
     logger.info("PIPELINE ETL: SHOPEE ATRIBUIÇÃO DE ENTREGA")
@@ -86,6 +110,8 @@ async def run_pipeline(table_name: str = TABLE_NAME):
                     schema="public",
                     conflict_columns=cols_conflito,
                 )
+
+        garantir_unique_constraint(table_name, CONFLICT_COLUMNS[0])
 
         logger.info("\n" + "=" * 80)
         logger.info("✅ PIPELINE CONCLUÍDO COM SUCESSO!")
