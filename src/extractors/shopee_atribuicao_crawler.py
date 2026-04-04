@@ -182,15 +182,35 @@ async def extract_shopee_atribuicao() -> Path:
                     
                     # Agora clicar em "Select All in All Pages"
                     logger.info("Clicando em 'Select All in All Pages'...")
-                    # O dropdown é customizado e pode não ser "visível" para o Playwright
-                    # Usar force=True para ignorar verificação de visibilidade
-                    opcao_all = page.locator('text="Select All in All Pages"').first
-                    await opcao_all.click(force=True, timeout=10_000)
+                    
+                    # Aguardar o dropdown estar visível antes de clicar
+                    await page.wait_for_timeout(1_000)
+                    
+                    # Tentar via JavaScript para garantir que o clique funcione
+                    clicado = await page.evaluate("""() => {
+                        const items = Array.from(document.querySelectorAll('.ssc-react-table-selection-menu-item, div[role="option"], .ant-dropdown-menu-item'));
+                        const selectAllItem = items.find(item => item.textContent.includes('Select All in All Pages'));
+                        if (selectAllItem) {
+                            selectAllItem.click();
+                            return true;
+                        }
+                        return false;
+                    }""")
+                    
+                    if clicado:
+                        logger.info("✅ 'Select All in All Pages' clicado via JavaScript.")
+                    else:
+                        # Fallback: tentar via Playwright
+                        try:
+                            opcao_all = page.locator('text="Select All in All Pages"').first
+                            await opcao_all.click(force=True, timeout=10_000)
+                            logger.info("✅ 'Select All in All Pages' clicado via Playwright.")
+                        except Exception as e:
+                            logger.warning(f"Falha ao clicar via Playwright: {e}")
+                    
                     await page.wait_for_timeout(5_000)
-                    logger.info("✅ 'Select All in All Pages' clicado.")
                     
                     # Verificar se registros foram realmente selecionados
-                    # Procurar por indicador como "X Task(s) Selected"
                     try:
                         texto_selecionados = await page.locator('text=Selected').first.text_content(timeout=5_000)
                         logger.info(f"Indicador de seleção: {texto_selecionados}")
@@ -199,7 +219,7 @@ async def extract_shopee_atribuicao() -> Path:
                     
                     # Tirar screenshot para confirmar
                     await page.screenshot(path=str(output_path / "pos_selecao.png"))
-                    logger.info("✅ Todos os registros selecionados.")
+                    logger.info("✅ Seleção concluída.")
                 else:
                     logger.warning("Checkbox do header não encontrado — pulando seleção.")
             except Exception as e:
