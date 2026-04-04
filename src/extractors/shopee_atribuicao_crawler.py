@@ -186,7 +186,19 @@ async def extract_shopee_atribuicao() -> Path:
                     # Usar force=True para ignorar verificação de visibilidade
                     opcao_all = page.locator('text="Select All in All Pages"').first
                     await opcao_all.click(force=True, timeout=10_000)
-                    await page.wait_for_timeout(3_000)
+                    await page.wait_for_timeout(5_000)
+                    logger.info("✅ 'Select All in All Pages' clicado.")
+                    
+                    # Verificar se registros foram realmente selecionados
+                    # Procurar por indicador como "X Task(s) Selected"
+                    try:
+                        texto_selecionados = await page.locator('text=Selected').first.text_content(timeout=5_000)
+                        logger.info(f"Indicador de seleção: {texto_selecionados}")
+                    except Exception:
+                        logger.warning("Não foi possível verificar quantos registros foram selecionados.")
+                    
+                    # Tirar screenshot para confirmar
+                    await page.screenshot(path=str(output_path / "pos_selecao.png"))
                     logger.info("✅ Todos os registros selecionados.")
                 else:
                     logger.warning("Checkbox do header não encontrado — pulando seleção.")
