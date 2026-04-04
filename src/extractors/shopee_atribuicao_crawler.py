@@ -182,8 +182,10 @@ async def extract_shopee_atribuicao() -> Path:
                     
                     # Agora clicar em "Select All in All Pages"
                     logger.info("Clicando em 'Select All in All Pages'...")
+                    # O dropdown é customizado e pode não ser "visível" para o Playwright
+                    # Usar force=True para ignorar verificação de visibilidade
                     opcao_all = page.locator('text="Select All in All Pages"').first
-                    await opcao_all.click(timeout=10_000)
+                    await opcao_all.click(force=True, timeout=10_000)
                     await page.wait_for_timeout(3_000)
                     logger.info("✅ Todos os registros selecionados.")
                 else:
@@ -198,10 +200,8 @@ async def extract_shopee_atribuicao() -> Path:
             botao_exportar = None
             for seletor in [
                 'button:has-text("Exportar AT")',
-                'text="Exportar AT"',
-                'button.ssc-button >> text="Exportar AT"',
-                'div >> text="Exportar AT"',
-                'button >> text="Exportar"',
+                'button:has-text("Exportar")',
+                'div:has-text("Exportar AT")',
             ]:
                 try:
                     botao_exportar = page.locator(seletor).first
@@ -218,18 +218,20 @@ async def extract_shopee_atribuicao() -> Path:
                 # Fallback: buscar pelo botão usando avaliação JavaScript
                 logger.info("Tentando encontrar botão via JavaScript...")
                 try:
-                    await page.evaluate("""() => {
-                        const buttons = document.querySelectorAll('button');
-                        for (const btn of buttons) {
-                            if (btn.textContent.includes('Exportar AT')) {
-                                btn.click();
-                                return true;
-                            }
+                    result = await page.evaluate("""() => {
+                        const buttons = Array.from(document.querySelectorAll('button'));
+                        const exportBtn = buttons.find(btn => btn.textContent.includes('Exportar AT'));
+                        if (exportBtn) {
+                            exportBtn.click();
+                            return true;
                         }
                         return false;
                     }""")
                     await page.wait_for_timeout(2_000)
-                    logger.info("✅ Botão 'Exportar AT' clicado via JavaScript.")
+                    if result:
+                        logger.info("✅ Botão 'Exportar AT' clicado via JavaScript.")
+                    else:
+                        raise Exception("Botão não encontrado via JavaScript")
                 except Exception as e:
                     logger.error(f"Erro ao clicar botão: {e}")
                     await page.screenshot(path=str(output_path / "erro_botao_exportar.png"))
