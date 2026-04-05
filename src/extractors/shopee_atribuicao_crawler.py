@@ -311,39 +311,39 @@ async def extract_shopee_atribuicao() -> Path:
                 await page.screenshot(path=str(output_path / "erro_painel.png"))
                 raise Exception("Não foi possível abrir o painel 'Última tarefa'.")
 
-            # 6. AGUARDAR E CLICAR NO BOTÃO "BAIXAR"
-            logger.info("Procurando botão 'Baixar' no painel...")
+            # 6. AGUARDAR E CLICAR NO BOTÃO "DOWNLOAD"
+            logger.info("Procurando botão 'Download' no painel...")
             
-            # Usar JavaScript para encontrar e clicar o primeiro botão "Baixar"
+            # Usar JavaScript para encontrar e clicar o primeiro botão "Download"
             # O painel tem overflow-y: auto então botões podem não estar visíveis para Playwright
             for tentativa in range(6):
                 try:
                     clicado = await page.evaluate("""() => {
-                        // Procurar em todas as task-rows o primeiro botão Baixar visível
+                        // Procurar em todas as task-rows o primeiro botão Download visível
                         const buttons = Array.from(document.querySelectorAll('.task-row .status-wrapper button, button.ssc-button'));
-                        const baixarBtn = buttons.find(btn => 
-                            btn.textContent.trim() === 'Baixar' && 
+                        const downloadBtn = buttons.find(btn => 
+                            (btn.textContent.trim() === 'Download' || btn.textContent.trim() === 'Baixar') && 
                             btn.offsetParent !== null
                         );
-                        if (baixarBtn) {
-                            baixarBtn.click();
+                        if (downloadBtn) {
+                            downloadBtn.click();
                             return true;
                         }
                         return false;
                     }""")
                     
                     if clicado:
-                        logger.info(f"✅ Botão 'Baixar' clicado via JavaScript (tentativa {tentativa + 1})")
+                        logger.info(f"✅ Botão 'Download' clicado via JavaScript (tentativa {tentativa + 1})")
                         break
                 except Exception as e:
-                    logger.warning(f"Erro ao clicar Baixar: {e}")
+                    logger.warning(f"Erro ao clicar Download: {e}")
                 
                 # Aguardar e tentar novamente
                 await page.wait_for_timeout(30_000)
                 logger.info(f"Aguardando export processar... {tentativa + 1} tentativa(s)")
             else:
-                await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
-                raise Exception("Timeout: botão 'Baixar' não encontrado.")
+                await page.screenshot(path=str(output_path / "erro_sem_download.png"))
+                raise Exception("Timeout: botão 'Download' não encontrado.")
 
             # 7. CAPTURAR DOWNLOAD
             logger.info("Aguardando download...")
