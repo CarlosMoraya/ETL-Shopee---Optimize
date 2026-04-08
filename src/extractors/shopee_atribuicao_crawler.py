@@ -17,6 +17,7 @@ import asyncio
 import os
 from pathlib import Path
 from datetime import datetime
+import re
 
 from playwright.async_api import async_playwright
 
@@ -33,6 +34,7 @@ async def extract_shopee_atribuicao() -> Path:
 
     email = os.environ.get("SHOPEE_EMAIL", "")
     senha = os.environ.get("SHOPEE_PWD", "")
+    headless_env = os.environ.get("CRAWLER_HEADLESS", "true").lower() == "true"
 
     if not email or not senha:
         raise Exception("SHOPEE_EMAIL e SHOPEE_PWD devem estar definidos nos secrets.")
@@ -45,9 +47,10 @@ async def extract_shopee_atribuicao() -> Path:
     logger.info("=" * 80)
 
     async with async_playwright() as p:
-        logger.info("Iniciando navegador...")
+        logger.info(f"Iniciando navegador... (Headless: {headless_env})")
         browser = await p.chromium.launch(
-            headless=True,
+            headless=headless_env,
+            slow_mo=300 if not headless_env else 0, # Fica visual para o usuário quando false
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         context = await browser.new_context(
@@ -160,22 +163,66 @@ async def extract_shopee_atribuicao() -> Path:
             # 2. NAVEGAR PARA ATRIBUIÇÃO DE ENTREGA
             logger.info(f"Navegando para: {ATRIBUICAO_URL}")
             await page.goto(ATRIBUICAO_URL, wait_until="domcontentloaded", timeout=60_000)
-            await page.wait_for_timeout(15_000)
+            await page.wait_for_timeout(10_000)
             await page.screenshot(path=str(output_path / "pagina_atribuicao.png"))
-            logger.info("✅ Página de Atribuição de Entrega carregada.")
 
-            # 2.1. ALTERAR PAGINAÇÃO PARA 100 (máximo) para garantir export completo
+            # 2.1. Clicar na Aba 'Todos'
+            logger.info("Clicando na aba 'Todos'...")
+            aba_encontrada = False
+            try:
+                # Tenta localizar a estrutura de abas
+                await page.locator('.ant-tabs-tab, .tab-item, div[role="tab"]').first.wait_for(timeout=5_000)
+                
+                abas = await page.locator('.ant-tabs-tab, .tab-item, div[role="tab"]').all()
+                for aba in abas:
+                    try:
+                        if await aba.is_visible():
+                            texto_aba = await aba.inner_text()
+                            if "Todos" in texto_aba or "All" in texto_aba:
+                                await aba.click(force=True)
+                                logger.info(f"✅ Aba '{texto_aba.strip()}' clicada via estrutura.")
+                                await page.wait_for_timeout(5_000)
+                                aba_encontrada = True
+                                break
+                    except:
+                        pass
+            except Exception as e:
+                logger.warning(f"Estrutura padrão de abas não encontrada: {e}")
+                
+            if not aba_encontrada:
+                try:
+                    logger.info("Iniciando fallback: clicando aba via texto literal...")
+                    aba_text = page.locator('text=/^(Todos|All)$/i').first
+                    if await aba_text.count() > 0:
+                        await aba_text.click(force=True)
+                        logger.info("✅ Aba clicada via fallback de texto.")
+                        await page.wait_for_timeout(5_000)
+                    else:
+                        logger.warning("Nenhuma aba com texto 'Todos' encontrada via fallback.")
+                except Exception as e:
+                    logger.warning(f"Aviso ao tentar fallback da aba Todos: {e}")
+
+            # 2.2. Limpar Filtros de Data (se houver, para garantir full download)
+            logger.info("Garantindo que os filtros de data estão limpos / selecionado o maior período...")
+            try:
+                clear_icons = await page.locator('.ant-picker-clear').all()
+                for icon in clear_icons:
+                    if await icon.is_visible():
+                        await icon.click(force=True)
+                        await page.wait_for_timeout(1_000)
+            except Exception:
+                pass
+
+            # 2.3. ALTERAR PAGINAÇÃO PARA 100 (máximo) para garantir que mais itens fiquem nativos, se necessário
             logger.info("Configurando paginação para 100 itens por página...")
             try:
-                # Clicar no dropdown de paginação (ex: "20 / página")
                 dropdown_pagina = page.locator('text=/\\d+\\s*\\/\\s*página/').first
                 await dropdown_pagina.wait_for(timeout=10_000)
-                await dropdown_pagina.click()
+                await dropdown_pagina.click(force=True)  # force=True resolve o pointer events intercept
                 await page.wait_for_timeout(1_000)
                 
-                # Selecionar "100 / página"
                 opcao_100 = page.locator('text="100"').first
-                await opcao_100.click()
+                await opcao_100.click(force=True)
                 await page.wait_for_timeout(3_000)
                 logger.info("✅ Paginação configurada para 100 itens/página.")
             except Exception as e:
@@ -184,22 +231,16 @@ async def extract_shopee_atribuicao() -> Path:
             await page.screenshot(path=str(output_path / "pos_paginacao.png"))
 
             # 3. SELECIONAR TODOS OS REGISTROS
-            # Pelo screenshot: clicar no checkbox do header da tabela para abrir dropdown
             logger.info("Selecionando todos os registros...")
             try:
-                # Aguardar a tabela carregar completamente
                 await page.locator('table').first.wait_for(timeout=20_000)
                 await page.wait_for_timeout(3_000)
                 
-                # Clicar no checkbox do header (canto superior esquerdo da tabela)
-                # Tentar múltiplas abordagens
                 checkbox_header = None
                 for seletor in [
                     '.ant-table-selection-col input[type="checkbox"]',
                     'thead input[type="checkbox"]',
                     'th input[type="checkbox"]',
-                    'table thead th:first-child input',
-                    'div.ant-table-thead input[type="checkbox"]',
                 ]:
                     try:
                         checkbox_header = page.locator(seletor).first
@@ -210,19 +251,26 @@ async def extract_shopee_atribuicao() -> Path:
                         continue
                 
                 if checkbox_header:
-                    await checkbox_header.click()
+                    # Clicar na seta/dropdown do lado do checkbox primeiro
+                    try:
+                        # Achamos o th (cabeçalho) que contém o checkbox, nele geralmente tem um ícone de dropdown
+                        icone_dropdown = page.locator('th').filter(has=page.locator('input[type="checkbox"]')).locator('.ant-dropdown-trigger, i[class*="icon"], svg').last
+                        if await icone_dropdown.count() > 0:
+                            await icone_dropdown.click(force=True)
+                            logger.info("Clicou no trigger do dropdown do checkbox.")
+                    except:
+                        pass
+                    
                     await page.wait_for_timeout(2_000)
                     
-                    # Agora clicar em "Select All in All Pages"
-                    logger.info("Clicando em 'Select All in All Pages'...")
-                    
-                    # Aguardar o dropdown estar visível antes de clicar
-                    await page.wait_for_timeout(1_000)
-                    
-                    # Tentar via JavaScript para garantir que o clique funcione
+                    logger.info("Procurando e clicando em 'Select All in All Pages'...")
                     clicado = await page.evaluate("""() => {
-                        const items = Array.from(document.querySelectorAll('.ssc-react-table-selection-menu-item, div[role="option"], .ant-dropdown-menu-item'));
-                        const selectAllItem = items.find(item => item.textContent.includes('Select All in All Pages'));
+                        const items = Array.from(document.querySelectorAll('.ssc-react-table-selection-menu-item, div[role="option"], .ant-dropdown-menu-item, li[role="menuitem"]'));
+                        const selectAllItem = items.find(item => 
+                            item.textContent.includes('Select All in All Pages') ||
+                            item.textContent.includes('Selecionar todos nas páginas') ||
+                            item.textContent.includes('Selecionar todas as páginas')
+                        );
                         if (selectAllItem) {
                             selectAllItem.click();
                             return true;
@@ -230,62 +278,63 @@ async def extract_shopee_atribuicao() -> Path:
                         return false;
                     }""")
                     
+                    if not clicado:
+                        # Se não conseguiu abrir o dropdown e achar a opção, clica no checkbox normal como fallback
+                        logger.info("Opção 'Select All in All Pages' não visível de primeira, fatiando clique normal no checkbox.")
+                        await checkbox_header.click(force=True)
+                        await page.wait_for_timeout(1_000)
+                        
+                        # E tenta achar novamente a opção que pode aparecer DEPOIS de selecionar a página atual
+                        clicado = await page.evaluate("""() => {
+                            const items = Array.from(document.querySelectorAll('.ssc-react-table-selection-menu-item, div[role="option"], .ant-dropdown-menu-item, li[role="menuitem"]'));
+                            const selectAllItem = items.find(item => 
+                                item.textContent.includes('Select All in All Pages') ||
+                                item.textContent.includes('Selecionar todos nas páginas') ||
+                                item.textContent.includes('Selecionar todas as páginas')
+                            );
+                            if (selectAllItem) {
+                                selectAllItem.click();
+                                return true;
+                            }
+                            return false;
+                        }""")
+                    
                     if clicado:
-                        logger.info("✅ 'Select All in All Pages' clicado via JavaScript.")
+                        logger.info("✅ Seleção em lote (All Pages) clicada.")
                     else:
-                        # Fallback: tentar via Playwright
                         try:
-                            opcao_all = page.locator('text="Select All in All Pages"').first
-                            await opcao_all.click(force=True, timeout=10_000)
-                            logger.info("✅ 'Select All in All Pages' clicado via Playwright.")
+                            await page.locator('text=/Select All in All Pages|Selecionar todos nas/').first.click(force=True, timeout=5_000)
+                            logger.info("✅ Seleção em lote clicada via Playwright.")
                         except Exception as e:
-                            logger.warning(f"Falha ao clicar via Playwright: {e}")
+                            logger.warning(f"Falha tentar localizar em lote: {e}")
                     
                     await page.wait_for_timeout(5_000)
-                    
-                    # Verificar se registros foram realmente selecionados
-                    try:
-                        texto_selecionados = await page.locator('text=Selected').first.text_content(timeout=5_000)
-                        logger.info(f"Indicador de seleção: {texto_selecionados}")
-                    except Exception:
-                        logger.warning("Não foi possível verificar quantos registros foram selecionados.")
-                    
-                    # Tirar screenshot para confirmar
-                    await page.screenshot(path=str(output_path / "pos_selecao.png"))
-                    logger.info("✅ Seleção concluída.")
-                    
-                    # Aguardar para garantir que a seleção foi processada pelo backend
-                    logger.info("Aguardando processamento da seleção...")
-                    await page.wait_for_timeout(10_000)  # Aumentado para 10s
-                    
-                    # Verificar novamente quantos estão selecionados
                     try:
                         texto_final = await page.locator('text=Selected').first.text_content(timeout=5_000)
-                        logger.info(f"Seleção final confirmada: {texto_final}")
-                        # Extrair número para validar
-                        import re
-                        match = re.search(r'(\d[\d,]*)\s+Task', texto_final)
-                        if match:
-                            num_selecionado = int(match.group(1).replace(',', ''))
-                            logger.info(f"Total selecionado: {num_selecionado} tarefas")
-                            if num_selecionado < 5000:
-                                logger.warning(f"⚠️ Apenas {num_selecionado} selecionadas, esperado ~9.621. A seleção pode não ter persistido.")
-                    except Exception:
-                        logger.warning("Não foi possível confirmar seleção final.")
+                        logger.info(f"Total selecionado: {texto_final}")
+                    except:
+                        pass
                 else:
-                    logger.warning("Checkbox do header não encontrado — pulando seleção.")
+                    logger.warning("Checkbox do header não encontrado.")
             except Exception as e:
-                logger.warning(f"Erro ao selecionar todos: {e}")
+                logger.warning(f"Erro ao selecionar: {e}")
             
             await page.screenshot(path=str(output_path / "pos_select_all.png"))
 
-            # 4. CLICAR EM "EXPORTAR AT"
-            logger.info("Clicando em 'Exportar AT'...")
-            
-            # Tentar via JavaScript primeiro (mais confiável para este botão)
+            # 4. CLICAR EM "EXPORTAR AT" (evitando botões por linha da tabela)
+            logger.info("Clicando em 'Exportar' em lote...")
             clicado = await page.evaluate("""() => {
-                const buttons = Array.from(document.querySelectorAll('button'));
-                const exportBtn = buttons.find(btn => btn.textContent.trim().startsWith('Exportar AT'));
+                const buttons = Array.from(document.querySelectorAll('button:not(:disabled)'));
+                // Filtramos EXPLICITAMENTE os botões que não estão dentro da tabela
+                // pois cada linha pode ter um botão de "Exportar AT" (o que baixa somente 1)
+                const bulkButtons = buttons.filter(btn => !btn.closest('table') && !btn.closest('.ant-table'));
+                
+                const exportBtn = bulkButtons.find(btn => 
+                    btn.textContent.trim().startsWith('Exportar AT') ||
+                    btn.textContent.trim().startsWith('Exportar') ||
+                    btn.textContent.trim() === 'Export'
+                );
+                
                 if (exportBtn) {
                     exportBtn.click();
                     return true;
@@ -294,6 +343,8 @@ async def extract_shopee_atribuicao() -> Path:
             }""")
             
             if clicado:
+                logger.info("✅ Botão de Exportação em Lote clicado via JavaScript!")
+            elif clicado:
                 logger.info("✅ Botão 'Exportar AT' clicado via JavaScript.")
             else:
                 # Fallback: tentar seletores Playwright

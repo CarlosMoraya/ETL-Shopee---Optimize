@@ -16,8 +16,17 @@ else:
 
 # Configurações do projeto
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
-DATA_PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+
+# Em ambientes serverless do Google Cloud (Cloud Run, Cloud Functions),
+# as gravações devem acontecer preferencialmente e de forma nativa em /tmp
+# O Cloud Run usa variáveis como K_SERVICE, CLOUD_RUN_JOB, etc.
+if os.environ.get("K_SERVICE") or os.environ.get("CLOUD_RUN_JOB") or os.environ.get("GOOGLE_CLOUD_PROJECT"):
+    BASE_DIR = Path("/tmp")
+else:
+    BASE_DIR = PROJECT_ROOT
+
+DATA_RAW_DIR = BASE_DIR / "data" / "raw"
+DATA_PROCESSED_DIR = BASE_DIR / "data" / "processed"
 
 # Garantir que os diretórios existem
 DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
