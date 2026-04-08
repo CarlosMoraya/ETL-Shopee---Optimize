@@ -52,5 +52,5 @@ def get_neon_connection_string() -> str:
 
 
 # Configurações de credenciais Shopee
-SHOPEE_EMAIL = os.environ.get("SHOPEE_EMAIL", "carlos.moraya@delunatransportes.com.br")
+SHOPEE_EMAIL = os.environ.get("SHOPEE_EMAIL", "carlos.souto@optimizelog.com.br")
 SHOPEE_PWD = os.environ.get("SHOPEE_PWD")
