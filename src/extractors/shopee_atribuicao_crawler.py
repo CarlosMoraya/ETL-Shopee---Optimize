@@ -121,27 +121,41 @@ async def extract_shopee_atribuicao() -> Path:
             current_url = page.url
             logger.info(f"URL atual após login: {current_url}")
             
-            # Confirmar login bem-sucedido verificando elementos da página
+            # Confirmar login bem-sucedido via URL ou elementos da página
+            current_url_lower = current_url.lower()
+            if "login" in current_url_lower:
+                logger.error(f"Redirecionamento falhou, URL atual: {current_url}")
+                await page.screenshot(path=str(output_path / "erro_login.png"))
+                raise Exception("Login falhou — o sistema permaneceu na tela de login.")
+
             login_confirmado = False
-            for seletor in [
-                'text="Atribuição de Entrega"',
-                'text="Força de trabalho"',
-                'text="Entrega LM"',
-                '.nav-menu',
-                '.sidebar',
-                'table',
-            ]:
-                try:
-                    await page.locator(seletor).first.wait_for(timeout=10_000)
-                    logger.info(f"✅ Login confirmado — elemento '{seletor}' encontrado!")
-                    login_confirmado = True
-                    break
-                except Exception:
-                    pass
             
+            # Se a URL indicar o dashboard/listagem, consideramos sucesso no redirecionamento.
+            if "agency-assignment" in current_url_lower or "logistics.myagencyservice.com.br/#/" in current_url_lower:
+                logger.info("✅ Login confirmado — a URL indica acesso à área interna!")
+                login_confirmado = True
+
+            # Caso ainda queira validar o carregamento da interface:
+            if not login_confirmado:
+                for seletor in [
+                    '.ant-layout',
+                    '.ant-table',
+                    '.ant-menu',
+                    'table',
+                    'text="Atribuição de Entrega"',
+                    'text="Força de trabalho"',
+                ]:
+                    try:
+                        await page.locator(seletor).first.wait_for(timeout=10_000)
+                        logger.info(f"✅ Login confirmado — elemento '{seletor}' encontrado!")
+                        login_confirmado = True
+                        break
+                    except Exception:
+                        pass
+                
             if not login_confirmado:
                 logger.error(f"URL atual: {page.url}")
-                raise Exception("Login pode ter falhado — nenhum elemento esperado encontrado na página.")
+                raise Exception("Login pode ter falhado — a URL não era a esperada e nenhum elemento esperado rendeu.")
 
             # 2. NAVEGAR PARA ATRIBUIÇÃO DE ENTREGA
             logger.info(f"Navegando para: {ATRIBUICAO_URL}")
