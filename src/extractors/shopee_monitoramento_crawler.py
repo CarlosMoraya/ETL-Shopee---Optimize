@@ -138,6 +138,9 @@ async def extract_shopee_monitoramento() -> Path:
 
     df["extracted_at"] = datetime.now()
 
+    # Adicionar a nova coluna 'embarcador' na primeira posição
+    df.insert(0, "embarcador", "Shopee_Last_Mile")
+
     logger.info("\n=== TOTAIS EXTRAÍDOS ===")
     for col in ["assigned", "handed_over", "delivered_qtd", "on_hold", "delivering_qtd"]:
         if col in df.columns:

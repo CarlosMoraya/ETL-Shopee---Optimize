@@ -443,21 +443,55 @@ async def extract_shopee_atribuicao() -> Path:
 
     df["extracted_at"] = datetime.now()
 
+    # Adicionar a nova coluna 'embarcador' na primeira posição
+    df.insert(0, "embarcador", "Shopee_Last_Mile")
+
     logger.info(f"Colunas normalizadas: {list(df.columns)}")
     logger.info(f"Total Atribuições: {len(df)}")
 
-    processed_file = output_path / f"processed_{timestamp}.csv"
-    df.to_csv(processed_file, index=False)
-    logger.info(f"Dados processados salvos: {processed_file}")
+    # Salvar DataFrame completo
+    processed_file_completo = output_path / f"processed_{timestamp}_complet.csv"
+    df.to_csv(processed_file_completo, index=False)
+    logger.info(f"Dados processados (completo) salvos: {processed_file_completo}")
 
-    return processed_file
+    # Gerar DataFrame focado apenas em ATs únicas
+    # Possíveis nomes após normalização para a coluna de AT
+    possiveis_nomes_at = ["assignment_task_id", "at", "id_da_at", "task_id"]
+    coluna_at = next((col for col in possiveis_nomes_at if col in df.columns), None)
+    
+    # Se não encontrar pelos nomes conhecidos, usar a primeira que possa ter 'task_id' ou 'at' no nome
+    if not coluna_at:
+        coluna_at = next((col for col in df.columns if "task_id" in col or "at_" in col or "_at" in col), None)
 
+    if coluna_at:
+        logger.info(f"Removendo duplicatas baseado na coluna da AT: '{coluna_at}'")
+        df_uniq = df.drop_duplicates(subset=[coluna_at]).copy()
+    else:
+        logger.warning("Não foi possível identificar a coluna de identificação da AT. Usando todas as linhas no df_uniq.")
+        df_uniq = df.copy()
+
+    # Remover a coluna com número de pedido, se existir (várias possiblidades de digitação/normalização)
+    colunas_pedido = [c for c in df_uniq.columns if "nmero_do_pedido" in c or "numero_do_pedido" in c or "nmero_pedido" in c or "pedido" in c]
+    if colunas_pedido:
+        df_uniq = df_uniq.drop(columns=colunas_pedido)
+        logger.info(f"Colunas descartadas do df_uniq: {colunas_pedido}")
+
+    processed_file_uniq = output_path / f"processed_{timestamp}_uniq.csv"
+    df_uniq.to_csv(processed_file_uniq, index=False)
+    logger.info(f"Dados processados (únicos) salvos: {processed_file_uniq}")
+
+    return {
+        "completo": str(processed_file_completo),
+        "uniq": str(processed_file_uniq)
+    }
 
 async def run():
     try:
-        arquivo = await extract_shopee_atribuicao()
-        logger.info(f"✅ Extração concluída: {arquivo}")
-        return str(arquivo)
+        arquivos = await extract_shopee_atribuicao()
+        logger.info(f"✅ Extração concluída. Arquivos gerados:")
+        logger.info(f" - Completo: {arquivos['completo']}")
+        logger.info(f" - Únicos: {arquivos['uniq']}")
+        return arquivos
     except Exception as e:
         logger.error(f"❌ Falha na extração: {e}")
         raise

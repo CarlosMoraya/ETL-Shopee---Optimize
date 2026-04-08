@@ -238,6 +238,9 @@ async def extract_shopee_pnr() -> Path:
 
     df["extracted_at"] = datetime.now()
 
+    # Adicionar a nova coluna 'embarcador' na primeira posição
+    df.insert(0, "embarcador", "Shopee_Last_Mile")
+
     logger.info(f"Colunas normalizadas: {list(df.columns)}")
     logger.info(f"Total Tickets PNR: {len(df)}")
 

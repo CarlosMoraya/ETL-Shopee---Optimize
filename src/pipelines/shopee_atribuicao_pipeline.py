@@ -25,42 +25,56 @@ async def run_pipeline(table_name: str = TABLE_NAME):
     try:
         # EXTRACT
         logger.info("\n📥 FASE 1: EXTRAÇÃO")
-        arquivo_processado = await extract_shopee_atribuicao()
+        arquivos_processados = await extract_shopee_atribuicao()
 
-        # TRANSFORM
-        logger.info("\n🔄 FASE 2: TRANSFORMAÇÃO")
-        df = pd.read_csv(arquivo_processado)
-        logger.info(f"Linhas carregadas: {len(df)}")
-        logger.info(f"Colunas: {list(df.columns)}")
+        # TRANSFORM E CARGA COMPLETO
+        logger.info("\n🔄 FASE 2: TRANSFORMAÇÃO E CARGA (COMPLETA)")
+        df_completo = pd.read_csv(arquivos_processados["completo"])
+        logger.info(f"Linhas carregadas (completo): {len(df_completo)}")
 
-        if len(df) == 0:
+        if len(df_completo) == 0:
             raise Exception("DataFrame vazio — nenhum dado extraído.")
 
-        df["extracted_at"] = datetime.now()
+        df_completo["extracted_at"] = datetime.now()
 
         # LOAD — replace sempre (recria a tabela com os tipos corretos)
-        logger.info("\n📤 FASE 3: CARGA")
-        logger.info("Carregando com replace...")
-        rows_inserted = load_to_neon(
-            df=df,
+        logger.info("\n📤 FASE 3: CARGA (COMPLETA)")
+        logger.info("Carregando tabela completa com replace...")
+        rows_inserted_completo = load_to_neon(
+            df=df_completo,
             table_name=table_name,
+            schema="public",
+            if_exists="replace",
+        )
+
+        # TRANSFORM E CARGA UNICOS
+        logger.info("\n🔄 FASE 4: TRANSFORMAÇÃO E CARGA (ÚNICAS)")
+        df_uniq = pd.read_csv(arquivos_processados["uniq"])
+        logger.info(f"Linhas carregadas (únicas): {len(df_uniq)}")
+
+        df_uniq["extracted_at"] = datetime.now()
+
+        table_name_uniq = f"{table_name}_uniq_at"
+        logger.info("Carregando tabela única com replace...")
+        rows_inserted_uniq = load_to_neon(
+            df=df_uniq,
+            table_name=table_name_uniq,
             schema="public",
             if_exists="replace",
         )
 
         logger.info("\n" + "=" * 80)
         logger.info("✅ PIPELINE CONCLUÍDO COM SUCESSO!")
-        logger.info(f"   - Linhas extraídas: {len(df)}")
-        logger.info(f"   - Linhas afetadas: {rows_inserted}")
-        logger.info(f"   - Tabela: {table_name}")
+        logger.info(f"   - Tabela: {table_name} | Linhas inseridas: {rows_inserted_completo}")
+        logger.info(f"   - Tabela: {table_name_uniq} | Linhas inseridas: {rows_inserted_uniq}")
         logger.info(f"   - Modo: replace")
         logger.info("=" * 80)
 
         return {
             "status": "success",
-            "extracted_rows": len(df),
-            "inserted_rows": rows_inserted,
-            "table": table_name,
+            "inserted_rows_completo": rows_inserted_completo,
+            "inserted_rows_uniq": rows_inserted_uniq,
+            "tables": [table_name, table_name_uniq],
             "mode": "replace",
         }
 
