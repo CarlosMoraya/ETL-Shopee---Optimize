@@ -321,140 +321,150 @@ async def extract_shopee_atribuicao() -> Path:
             
             await page.screenshot(path=str(output_path / "pos_select_all.png"))
 
-            # 4. CLICAR EM "EXPORTAR AT" (evitando botões por linha da tabela)
-            logger.info("Clicando em 'Exportar' em lote...")
+            # 4. CLICAR EM "EXPORT AT" / "EXPORTAR AT"
+            # Descoberta via inspeção do DOM: o botão está em inglês ("Export AT")
+            # e usa a classe 'ssc-react-button-normal'.
+            # Os botões das LINHAS da tabela usam 'ssc-react-button-link', logo é seguro filtrar por classe.
+            logger.info("Clicando em 'Export AT' em lote...")
+            await page.screenshot(path=str(output_path / "pre_export_click.png"))
             clicado = await page.evaluate("""() => {
-                const buttons = Array.from(document.querySelectorAll('button:not(:disabled)'));
-                // Filtramos EXPLICITAMENTE os botões que não estão dentro da tabela
-                // pois cada linha pode ter um botão de "Exportar AT" (o que baixa somente 1)
-                const bulkButtons = buttons.filter(btn => !btn.closest('table') && !btn.closest('.ant-table'));
+                // Estratégia principal: filtrar por classe para evitar botões de linha
+                // Bulk buttons = ssc-react-button-normal | Row buttons = ssc-react-button-link
+                const bulkButtons = Array.from(document.querySelectorAll(
+                    'button.ssc-react-button-normal:not(:disabled), button.ssc-react-button:not(.ssc-react-button-link):not(:disabled)'
+                ));
                 
-                const exportBtn = bulkButtons.find(btn => 
-                    btn.textContent.trim().startsWith('Exportar AT') ||
-                    btn.textContent.trim().startsWith('Exportar') ||
-                    btn.textContent.trim() === 'Export'
-                );
+                const exportBtn = bulkButtons.find(btn => {
+                    const text = btn.textContent.trim();
+                    return (
+                        text.startsWith('Export AT') ||
+                        text.startsWith('Exportar AT') ||
+                        text.startsWith('Export') && text.includes('AT')
+                    );
+                });
                 
                 if (exportBtn) {
                     exportBtn.click();
-                    return true;
+                    return exportBtn.textContent.trim();
                 }
-                return false;
+                return null;
             }""")
             
             if clicado:
-                logger.info("✅ Botão de Exportação em Lote clicado via JavaScript!")
-            elif clicado:
-                logger.info("✅ Botão 'Exportar AT' clicado via JavaScript.")
+                logger.info(f"✅ Botão '{clicado}' em lote clicado via JavaScript!")
             else:
-                # Fallback: tentar seletores Playwright
-                botao_exportar = None
+                # Fallback: tentar seletores Playwright com ambas as variantes de idioma
+                sucesso_click = False
                 for seletor in [
+                    'button.ssc-react-button-normal:has-text("Export AT")',
+                    'button.ssc-react-button-normal:has-text("Exportar AT")',
+                    'button.ssc-react-button:not(.ssc-react-button-link):has-text("Export AT")',
+                    'button:has-text("Export AT")',
                     'button:has-text("Exportar AT")',
-                    'button.ssc-react-button >> text="Exportar AT"',
                 ]:
                     try:
-                        botao_exportar = page.locator(seletor).first
-                        await botao_exportar.wait_for(timeout=5_000)
-                        await botao_exportar.click()
+                        loc = page.locator(seletor).first
+                        count = await loc.count()
+                        if count == 0:
+                            continue
+                        await loc.wait_for(timeout=5_000)
+                        await loc.click(force=True)
                         logger.info(f"✅ Botão clicado via seletor: {seletor}")
+                        sucesso_click = True
                         break
                     except Exception:
                         continue
                 
-                if not botao_exportar:
-                    logger.error("Botão 'Exportar AT' não encontrado!")
+                if not sucesso_click:
+                    logger.error("Botão 'Export AT' não encontrado!")
+                    # Dump HTML para debug
+                    with open(str(output_path / "page_dump.html"), "w", encoding="utf-8") as f:
+                        f.write(await page.content())
                     await page.screenshot(path=str(output_path / "erro_botao_exportar.png"))
-                    raise Exception("Botão 'Exportar AT' não encontrado.")
+                    raise Exception("Botão 'Export AT' não encontrado.")
 
-            # Aguardar 30 segundos para o export ser processado
-            logger.info("Aguardando 30 segundos para processamento do export...")
-            await page.wait_for_timeout(30_000)
-            logger.info("✅ Aguardo concluído.")
+            # 5. AGUARDAR PROCESSAMENTO NAVEGANDO PARA O TASK CENTER
+            # Descoberta via inspeção: o status de sucesso é "Succeed".
+            # O botão Download está em: button.ssc-button.action-link
+            # Estratégia: navegar para o Task Center, aguardar "Succeed" na linha mais recente
+            # e clicar Download DENTRO do expect_download para capturar corretamente.
+            TASK_CENTER_URL = "https://logistics.myagencyservice.com.br/#/taskCenter/exportTaskCenter"
+            logger.info(f"Aguardando 20 segundos antes de verificar o Task Center...")
+            await page.wait_for_timeout(20_000)
 
-            # 5. ABRIR PAINEL "ÚLTIMA TAREFA" via ícone de tarefas no header
-            logger.info("Abrindo painel 'Última tarefa' via ícone de tarefas...")
-            painel_aberto = False
-            for tentativa_painel in range(4):
-                try:
-                    icone = page.locator('div[data-v-13320df0].icon').first
-                    await icone.wait_for(timeout=5_000)
-                    await icone.click()
-                    await page.wait_for_timeout(3_000)
-                    
-                    # O portal alterna entre PT-BR e EN; aceitar ambos.
-                    logger.info("Tentando abrir detalhes completos da tarefa...")
-                    try:
-                        ver_tudo = None
-                        for seletor_ver_tudo in [
-                            'button:has-text("Ver tudo")',
-                            'button:has-text("View All")',
-                        ]:
-                            try:
-                                ver_tudo = page.locator(seletor_ver_tudo).first
-                                await ver_tudo.wait_for(timeout=5_000)
-                                await ver_tudo.click()
-                                logger.info(f"Detalhes abertos com seletor: {seletor_ver_tudo}")
-                                await page.wait_for_timeout(3_000)
-                                break
-                            except Exception:
-                                continue
-                    except Exception as e:
-                        logger.warning(f"Botão de detalhes completos não encontrado: {e}")
-                    
-                    await page.screenshot(path=str(output_path / f"painel_tentativa_{tentativa_painel}.png"))
-                    painel_aberto = True
-                    logger.info(f"✅ Painel aberto (tentativa {tentativa_painel + 1})")
-                    break
-                except Exception as e:
-                    logger.warning(f"Tentativa {tentativa_painel + 1} — ícone não encontrado: {e}")
-                    await page.wait_for_timeout(30_000)
+            logger.info(f"Navegando para o Task Center: {TASK_CENTER_URL}")
+            await page.goto(TASK_CENTER_URL, wait_until="domcontentloaded", timeout=60_000)
+            # Aguardar React renderizar o conteúdo das células (SSC virtual table)
+            await page.wait_for_timeout(12_000)
 
-            if not painel_aberto:
-                await page.screenshot(path=str(output_path / "erro_painel.png"))
-                raise Exception("Não foi possível abrir o painel 'Última tarefa'.")
-
-            # 6. AGUARDAR E CLICAR NO BOTÃO "DOWNLOAD" DA TAREFA MAIS RECENTE
-            logger.info("Procurando botão 'Download' da tarefa mais recente...")
+            # 6. POLLING: aguardar status "Succeed" na tarefa mais recente (primeira linha)
+            logger.info("Aguardando tarefa mais recente atingir status 'Succeed'...")
+            download_clicado = False
+            MAX_TENTATIVAS = 14  # até ~7 minutos (14 × 30s)
             
-            # Usar JavaScript para encontrar o botão Download da primeira task-row (mais recente)
-            for tentativa in range(6):
-                try:
-                    clicado = await page.evaluate("""() => {
-                        // Pegar a PRIMEIRA task-row (mais recente) e clicar seu botão Download
-                        const taskRows = document.querySelectorAll('.task-row');
-                        if (taskRows.length > 0) {
-                            const firstRow = taskRows[0];
-                            const downloadBtn = firstRow.querySelector('.status-wrapper button');
-                            if (downloadBtn && downloadBtn.offsetParent !== null) {
-                                // Verificar se é um botão Download/Baixar
-                                const text = downloadBtn.textContent.trim();
-                                if (text === 'Download' || text === 'Baixar') {
-                                    downloadBtn.click();
-                                    return true;
-                                }
-                            }
-                        }
-                        return false;
-                    }""")
-                    
-                    if clicado:
-                        logger.info(f"✅ Botão 'Download' clicado via JavaScript (tentativa {tentativa + 1})")
-                        break
-                except Exception as e:
-                    logger.warning(f"Erro ao clicar Download: {e}")
+            for tentativa in range(MAX_TENTATIVAS):
+                await page.screenshot(path=str(output_path / f"task_center_{tentativa:02d}.png"))
                 
-                # Aguardar e tentar novamente
-                await page.wait_for_timeout(30_000)
-                logger.info(f"Aguardando export processar... {tentativa + 1} tentativa(s)")
-            else:
-                await page.screenshot(path=str(output_path / "erro_sem_download.png"))
-                raise Exception("Timeout: botão 'Download' não encontrado.")
-
-            # 7. CAPTURAR DOWNLOAD
-            logger.info("Aguardando download...")
-            async with page.expect_download(timeout=120_000) as download_info:
-                pass  # O clique já foi feito via JavaScript
+                # SSC React table usa virtual DOM — textContent das linhas fica vazio.
+                # Usar innerText do body inteiro que reflete o texto RENDERIZADO.
+                status_atual = await page.evaluate("""() => {
+                    const body = document.body.innerText || '';
+                    if (body.includes('Succeed')) return 'Succeed';
+                    if (body.includes('Processing')) return 'Processing';
+                    if (body.includes('Failed')) return 'Failed';
+                    // Diagnóstico: retornar amostra do body para o log
+                    return 'WAITING|' + body.replace(/\\s+/g, ' ').substring(0, 120);
+                }""")
+                
+                logger.info(f"Tentativa {tentativa + 1}/{MAX_TENTATIVAS} — Status: {status_atual}")
+                
+                if status_atual == "Succeed":
+                    logger.info("✅ Tarefa pronta! Iniciando download...")
+                    # 7. CAPTURAR DOWNLOAD — clique DENTRO do expect_download
+                    async with page.expect_download(timeout=120_000) as download_info:
+                        btn_texto = await page.evaluate("""() => {
+                            // Buscar botão Download pela API de texto renderizado
+                            // (innerText), independente da estrutura de tabela
+                            const allBtns = Array.from(document.querySelectorAll('button'));
+                            const dlBtn = allBtns.find(b => {
+                                const t = (b.innerText || b.textContent || '').trim();
+                                return t === 'Download' || t === 'Baixar';
+                            });
+                            if (dlBtn) {
+                                dlBtn.click();
+                                return (dlBtn.innerText || dlBtn.textContent).trim();
+                            }
+                            return null;
+                        }""")
+                    
+                    if btn_texto:
+                        logger.info(f"✅ Download iniciado (botão: '{btn_texto}')")
+                        download_clicado = True
+                    else:
+                        logger.warning("Botão Download não clicado via JS. Tentando Playwright...")
+                        try:
+                            loc = page.locator('button:has-text("Download"), button:has-text("Baixar")').first
+                            async with page.expect_download(timeout=120_000) as download_info:
+                                await loc.click(force=True)
+                            logger.info("✅ Download iniciado via Playwright.")
+                            download_clicado = True
+                        except Exception as e:
+                            logger.error(f"Falha no clique do Download: {e}")
+                    break
+                
+                elif status_atual == "Failed":
+                    await page.screenshot(path=str(output_path / "erro_task_failed.png"))
+                    raise Exception("A tarefa de export falhou com status 'Failed' no Task Center.")
+                
+                else:
+                    logger.info(f"Aguardando 30s antes da próxima verificação...")
+                    await page.wait_for_timeout(30_000)
+                    await page.reload(wait_until="networkidle")
+                    await page.wait_for_timeout(5_000)
+            
+            if not download_clicado:
+                await page.screenshot(path=str(output_path / "erro_timeout_succeed.png"))
+                raise Exception(f"Timeout: tarefa não atingiu 'Succeed' após {MAX_TENTATIVAS} tentativas.")
 
             download = await download_info.value
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
