@@ -182,16 +182,54 @@ async def extract_shopee_driver_profile() -> Path:
             await download.save_as(str(caminho_arquivo))
             logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
 
+            # 9. VALIDAÇÃO: Verificar se o arquivo baixado é realmente de driver profile
+            logger.info("Validando arquivo baixado...")
+            sufixo_validacao = Path(caminho_arquivo).suffix.lower()
+            df_validacao = None
+            if sufixo_validacao == ".csv":
+                df_validacao = pd.read_csv(caminho_arquivo, nrows=5)
+            else:
+                df_validacao = pd.read_excel(caminho_arquivo, nrows=5)
+
+            colunas_lower = [c.lower() for c in df_validacao.columns]
+            colunas_texto = " ".join(colunas_lower)
+
+            # Driver profile deve ter colunas específicas como "motorista", "driver", "cnh", "vehicle"
+            indicadores_driver = ["motorista", "driver", "cnh", "veículo", "vehicle", "placa", "license"]
+            tem_indicador_driver = any(ind in colunas_texto for ind in indicadores_driver)
+
+            # PNR tickets tem colunas como "ticket", "pnr", "order", "assignee"
+            indicadores_pnr = ["ticket", "pnr_order", "rejection_reason", "assignee"]
+            tem_indicador_pnr = any(ind in colunas_texto for ind in indicadores_pnr)
+
+            if tem_indicador_pnr and not tem_indicador_driver:
+                logger.error("❌ VALIDAÇÃO FALHOU: Arquivo baixado parece ser de PNR Tickets, não de Driver Profile!")
+                logger.error(f"Colunas encontradas: {df_validacao.columns.tolist()}")
+                await page.screenshot(path=str(output_path / "erro_arquivo_incorreto.png"))
+                raise Exception(
+                    "Arquivo incorreto baixado! O painel retornou dados de PNR Tickets ao invés de Driver Profile. "
+                    "Isso pode indicar que há uma exportação de PNR mais recente no painel."
+                )
+
+            if not tem_indicador_driver and not tem_indicador_pnr:
+                logger.warning("⚠️ VALIDAÇÃO: Nenhuma coluna típica identificada. Verificando tamanho do arquivo...")
+                if len(df_validacao) == 0:
+                    raise Exception("Arquivo baixado está vazio!")
+
+            logger.info("✅ Validação do arquivo concluída - arquivo parece ser de Driver Profile")
+
         finally:
             await browser.close()
 
-    # 8. PROCESSAR COM PANDAS
+    # 10. PROCESSAR COM PANDAS (arquivo já foi lido na validação, mas vamos recarregar completo)
     logger.info("Processando arquivo...")
     sufixo = Path(caminho_arquivo).suffix.lower()
     if sufixo == ".csv":
         df = pd.read_csv(caminho_arquivo)
     else:
         df = pd.read_excel(caminho_arquivo)
+    
+    logger.info(f"✅ Arquivo de Driver Profile confirmado com {len(df)} linhas")
 
     logger.info(f"Linhas brutas: {len(df)} | Colunas: {len(df.columns)}")
 

@@ -186,10 +186,61 @@ async def extract_shopee_pnr() -> Path:
             await download.save_as(str(caminho_arquivo))
             logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
 
+            # 8. VALIDAÇÃO: Verificar se o arquivo baixado é realmente de PNR Tickets
+            logger.info("Validando arquivo baixado...")
+            sufixo_validacao = Path(caminho_arquivo).suffix.lower()
+            df_validacao = None
+            
+            if sufixo_validacao == ".zip":
+                import zipfile
+                logger.info("Arquivo ZIP detectado — descompactando para validação...")
+                with zipfile.ZipFile(caminho_arquivo, "r") as z:
+                    nomes = z.namelist()
+                    logger.info(f"Conteúdo do ZIP: {nomes}")
+                    arquivo_interno = nomes[0]
+                    z.extractall(output_path / "temp_validacao")
+                caminho_interno = output_path / "temp_validacao" / arquivo_interno
+                ext_interna = Path(arquivo_interno).suffix.lower()
+                if ext_interna == ".csv":
+                    df_validacao = pd.read_csv(caminho_interno, nrows=5)
+                else:
+                    df_validacao = pd.read_excel(caminho_interno, nrows=5)
+            elif sufixo_validacao == ".csv":
+                df_validacao = pd.read_csv(caminho_arquivo, nrows=5)
+            else:
+                df_validacao = pd.read_excel(caminho_arquivo, nrows=5)
+
+            colunas_lower = [c.lower() for c in df_validacao.columns]
+            colunas_texto = " ".join(colunas_lower)
+
+            # PNR tickets deve ter colunas específicas como "ticket", "pnr", "order", "assignee"
+            indicadores_pnr = ["ticket", "pnr_order", "rejection_reason", "assignee", "pnr"]
+            tem_indicador_pnr = any(ind in colunas_texto for ind in indicadores_pnr)
+
+            # Driver profile tem colunas como "motorista", "driver", "cnh", "vehicle"
+            indicadores_driver = ["motorista", "driver", "cnh", "veículo", "vehicle", "placa", "license"]
+            tem_indicador_driver = any(ind in colunas_texto for ind in indicadores_driver)
+
+            if tem_indicador_driver and not tem_indicador_pnr:
+                logger.error("❌ VALIDAÇÃO FALHOU: Arquivo baixado parece ser de Driver Profile, não de PNR Tickets!")
+                logger.error(f"Colunas encontradas: {df_validacao.columns.tolist()}")
+                await page.screenshot(path=str(output_path / "erro_arquivo_incorreto.png"))
+                raise Exception(
+                    "Arquivo incorreto baixado! O painel retornou dados de Driver Profile ao invés de PNR Tickets. "
+                    "Isso pode indicar que há uma exportação de Driver Profile mais recente no painel."
+                )
+
+            if not tem_indicador_pnr and not tem_indicador_driver:
+                logger.warning("⚠️ VALIDAÇÃO: Nenhuma coluna típica identificada. Verificando tamanho do arquivo...")
+                if len(df_validacao) == 0:
+                    raise Exception("Arquivo baixado está vazio!")
+
+            logger.info("✅ Validação do arquivo concluída - arquivo parece ser de PNR Tickets")
+
         finally:
             await browser.close()
 
-    # 8. PROCESSAR COM PANDAS
+    # 9. PROCESSAR COM PANDAS (arquivo já foi lido na validação, mas vamos recarregar completo)
     logger.info("Processando arquivo...")
     sufixo = Path(caminho_arquivo).suffix.lower()
     if sufixo == ".zip":
@@ -210,6 +261,8 @@ async def extract_shopee_pnr() -> Path:
         df = pd.read_csv(caminho_arquivo)
     else:
         df = pd.read_excel(caminho_arquivo)
+    
+    logger.info(f"✅ Arquivo de PNR Tickets confirmado com {len(df)} linhas")
 
     logger.info(f"Linhas brutas: {len(df)} | Colunas: {len(df.columns)}")
 
