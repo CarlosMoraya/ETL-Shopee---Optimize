@@ -120,45 +120,64 @@ async def extract_shopee_driver_profile() -> Path:
             # 5. CLICAR NA OPÇÃO 1 "EXPORTAR" DO DROPDOWN (NÃO "Histórico de exportações")
             logger.info("Clicando na opção 'Exportar' do dropdown (opção 1)...")
             
-            # Estratégia 1: Tentar clicar diretamente usando keyboard (Tab + Enter)
-            # Isso funciona mesmo com elementos ocultos
+            # O teste mostrou que o dropdown está hidden (visible: False) e os items estão vazios
+            # Precisamos forçar o dropdown a ficar visível e esperar o conteúdo carregar
             try:
-                logger.info("Tentando navegação por teclado...")
-                await page.keyboard.press("Tab")
-                await page.wait_for_timeout(500)
-                await page.keyboard.press("Enter")
-                logger.info("✅ Exportação solicitada via teclado!")
-            except Exception as e:
-                logger.warning(f"Teclado falhou: {e}")
+                logger.info("Tornando dropdown visível via JavaScript...")
                 
-                # Estratégia 2: Usar evaluate para clicar via JavaScript (ignora visibility)
-                try:
-                    logger.info("Tentando click via JavaScript...")
-                    await page.evaluate("""
-                        () => {
-                            const items = document.querySelectorAll('.popover.ssc-tooltip-popover.searcher-with-history-dropdown li, .popover.ssc-tooltip-popover.searcher-with-history-dropdown [role="menuitem"], .popover.ssc-tooltip-popover.searcher-with-history-dropdown div');
-                            for (let item of items) {
-                                if (item.textContent.includes('Exportar') && !item.textContent.includes('Histórico')) {
-                                    item.click();
-                                    return true;
-                                }
+                # Estratégia 1: Usar JavaScript para tornar visível e clicar
+                click_result = await page.evaluate("""
+                    async () => {
+                        const popover = document.querySelector('.popover.ssc-tooltip-popover.searcher-with-history-dropdown');
+                        if (!popover) return { success: false, error: 'Popover não encontrado' };
+                        
+                        // Tornar visível
+                        popover.style.display = 'block';
+                        popover.style.visibility = 'visible';
+                        popover.style.opacity = '1';
+                        popover.style.zIndex = '9999';
+                        
+                        // Aguardar conteúdo carregar
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // Procurar items de menu
+                        const allElements = popover.querySelectorAll('*');
+                        for (let el of allElements) {
+                            const text = el.textContent.trim();
+                            if (text && text.includes('Exportar') && !text.includes('Histórico') && !text.includes('Exportação')) {
+                                el.click();
+                                return { success: true, clicked: text, tag: el.tagName };
                             }
-                            return false;
                         }
-                    """)
+                        
+                        return { success: false, error: 'Item Exportar não encontrado', popoverHTML: popover.innerHTML.substring(0, 500) };
+                    }
+                """)
+                
+                logger.info(f"Resultado: {click_result}")
+                
+                if click_result.get('success'):
                     logger.info("✅ Exportação solicitada via JavaScript!")
-                except Exception as e2:
-                    logger.warning(f"JavaScript falhou: {e2}")
+                else:
+                    raise Exception(f"JavaScript não conseguiu clicar: {click_result}")
                     
-                    # Estratégia 3: Fallback - forçar click com force=True
-                    try:
-                        logger.info("Tentando force click...")
-                        opcao = page.locator('text=Exportar').first
-                        await opcao.click(force=True, timeout=10_000)
-                        logger.info("✅ Exportação solicitada com force click!")
-                    except Exception as e3:
-                        logger.error(f"Todas as estratégias falharam: {e3}")
-                        raise
+            except Exception as e:
+                logger.warning(f"JavaScript falhou: {e}")
+                logger.info("Tentando force click no botão Exportar...")
+                
+                # Estratégia 2: Force click com Playwright
+                try:
+                    # Esperar dropdown ficar visível
+                    await page.wait_for_timeout(2_000)
+                    
+                    # Clicar usando force=True
+                    opcao = page.locator('.popover.ssc-tooltip-popover.searcher-with-history-dropdown >> text=Exportar').first
+                    await opcao.click(force=True, timeout=15_000)
+                    logger.info("✅ Exportação solicitada com force click!")
+                except Exception as e2:
+                    logger.error(f"Todas as estratégias falharam: {e2}")
+                    await page.screenshot(path=str(output_path / "erro_dropdown.png"))
+                    raise
 
             logger.info("Exportação solicitada — aguardando 90s para processamento do servidor...")
             await page.wait_for_timeout(90_000)
