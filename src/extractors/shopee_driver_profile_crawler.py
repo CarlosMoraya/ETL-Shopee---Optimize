@@ -225,40 +225,48 @@ async def extract_shopee_driver_profile() -> Path:
             # Aguardar painel carregar completamente
             await page.wait_for_timeout(5_000)
 
-            # Configurar listener de download ANTES de clicar
-            download_promise = None
-
             for tentativa_baixar in range(6):
                 try:
                     # Estratégia 1: Procurar pela tarefa específica "Spx Driver"
                     logger.info(f"Tentativa {tentativa_baixar + 1}: Procurando por 'Spx Driver'...")
 
-                    # Usar JavaScript para encontrar e clicar na tarefa correta
-                    click_result = await page.evaluate("""
-                        () => {
-                            const results = [];
-                            document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
-                                const text = el.textContent || '';
-                                if (text.includes('Spx Driver') || text.includes('spx_driver')) {
-                                    const buttons = el.querySelectorAll('button');
-                                    buttons.forEach(btn => {
-                                        if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
-                                            btn.click();
-                                            results.push({ 
-                                                success: true, 
-                                                taskText: text.substring(0, 100) 
-                                            });
-                                        }
-                                    });
-                                }
-                            });
-                            return results.length > 0 ? results[0] : { success: false, error: 'Spx Driver não encontrado' };
-                        }
-                    """)
+                    # Configurar listener de download ANTES de clicar
+                    async with page.expect_download(timeout=60_000) as download_info:
+                        # Usar JavaScript para encontrar e clicar na tarefa correta
+                        click_result = await page.evaluate("""
+                            () => {
+                                const results = [];
+                                document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
+                                    const text = el.textContent || '';
+                                    if (text.includes('Spx Driver') || text.includes('spx_driver')) {
+                                        const buttons = el.querySelectorAll('button');
+                                        buttons.forEach(btn => {
+                                            if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
+                                                btn.click();
+                                                results.push({ 
+                                                    success: true, 
+                                                    taskText: text.substring(0, 100) 
+                                                });
+                                            }
+                                        });
+                                    }
+                                });
+                                return results.length > 0 ? results[0] : { success: false, error: 'Spx Driver não encontrado' };
+                            }
+                        """)
                     
+                    # Agora temos o download_info do expect_download
                     if click_result.get('success'):
                         logger.info(f"✅ Tarefa 'Spx Driver' encontrada e botão clicado: {click_result.get('taskText')}")
                         encontrado = True
+                        
+                        # Aguardar o download completar
+                        download = await download_info.value
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
+                        await download.save_as(str(caminho_arquivo))
+                        logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+                        logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
                         break
                     else:
                         logger.warning(f"⚠️ {click_result.get('error')}")
@@ -280,46 +288,26 @@ async def extract_shopee_driver_profile() -> Path:
             if not encontrado:
                 # Fallback final: clicar no PRIMEIRO botão "Baixar" via JavaScript
                 logger.warning("⚠️ Não encontrou 'Spx Driver', clicando no primeiro botão 'Baixar'...")
-                click_result = await page.evaluate("""
-                    () => {
-                        const buttons = document.querySelectorAll('button');
-                        for (let btn of buttons) {
-                            if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
-                                btn.click();
-                                return { success: true };
+                async with page.expect_download(timeout=60_000) as download_info:
+                    click_result = await page.evaluate("""
+                        () => {
+                            const buttons = document.querySelectorAll('button');
+                            for (let btn of buttons) {
+                                if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
+                                    btn.click();
+                                    return { success: true };
+                                }
                             }
+                            return { success: false };
                         }
-                        return { success: false };
-                    }
-                """)
-                if not click_result.get('success'):
-                    await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
-                    raise Exception("Timeout: botão 'Baixar' não apareceu no painel.")
-
-            # 8. AGUARDAR DOWNLOAD
-            logger.info("Aguardando download iniciar...")
-            # Aguardar o download ser completado (pode levar alguns segundos)
-            await page.wait_for_timeout(10_000)
-            
-            # Obter o último download realizado
-            downloads = context.downloads
-            if len(downloads) == 0:
-                # Se não há downloads, aguardar mais um pouco
-                logger.info("Nenhum download detectado ainda, aguardando...")
-                await page.wait_for_timeout(20_000)
-                downloads = context.downloads
-            
-            if len(downloads) == 0:
-                await page.screenshot(path=str(output_path / "erro_sem_download.png"))
-                raise Exception("Nenhum arquivo foi baixado!")
-            
-            # Pegar o download mais recente
-            download = downloads[-1]
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
-            await download.save_as(str(caminho_arquivo))
-            logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
-            logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
+                    """)
+                    download = await download_info.value
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
+                await download.save_as(str(caminho_arquivo))
+                logger.info(f"✅ Arquivo baixado (fallback): {caminho_arquivo}")
+                logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
 
             # 9. VALIDAÇÃO: Verificar se o arquivo baixado é realmente de driver profile
             logger.info("Validando arquivo baixado...")
