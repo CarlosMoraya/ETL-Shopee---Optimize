@@ -122,12 +122,13 @@ async def extract_shopee_driver_profile() -> Path:
             # O dropdown tem: opção 1 = "Exportar", opção 2 = "Histórico de exportações"
             # Precisamos clicar na primeira opção que é apenas "Exportar"
             try:
-                # Procurar pelo item exato "Exportar" dentro do dropdown
-                # Usar nth(0) para pegar o primeiro elemento com texto exato "Exportar"
-                dropdown_container = page.locator('.ssc-dropdown-menu, [class*="dropdown"], .el-dropdown-menu').first
+                # Baseado no log, o dropdown usa a classe: popover ssc-tooltip-popover searcher-with-history-dropdown
+                dropdown_container = page.locator('.popover.ssc-tooltip-popover.searcher-with-history-dropdown, .ssc-tooltip-popover.searcher-with-history-dropdown').first
                 await dropdown_container.wait_for(timeout=10_000)
+                logger.info("✅ Container do dropdown encontrado!")
                 
-                # Dentro do dropdown, encontrar o item "Exportar" (não "Histórico")
+                # Dentro do dropdown, encontrar itens de menu (geralmente li ou div com role="menuitem")
+                # Procurar pelo item "Exportar" que NÃO contenha "Histórico"
                 opcao_exportar = dropdown_container.locator('text=Exportar').first
                 await opcao_exportar.wait_for(timeout=10_000)
                 
@@ -146,10 +147,26 @@ async def extract_shopee_driver_profile() -> Path:
                 await opcao_exportar.click()
                 logger.info("✅ Opção 'Exportar' clicada!")
             except Exception as e:
-                logger.warning(f"Fallback: tentando clicar 'Exportar' diretamente: {e}")
-                # Fallback: clicar no primeiro text=Exportar
-                await page.locator('text=Exportar').first.click()
-            
+                logger.warning(f"Erro ao localizar dropdown: {e}")
+                logger.info("Tentando estratégia alternativa: clicar diretamente no item do menu...")
+                # Estratégia alternativa: procurar por li/div dentro do popover
+                try:
+                    # Procurar items de menu no popover
+                    menu_items = page.locator('.popover.ssc-tooltip-popover.searcher-with-history-dropdown li, .popover.ssc-tooltip-popover.searcher-with-history-dropdown [role="menuitem"]').all()
+                    for item in menu_items:
+                        try:
+                            texto = await item.text_content(timeout=2_000)
+                            if texto and "Exportar" in texto and "Histórico" not in texto:
+                                logger.info(f"Clicando em item: '{texto.strip()}'")
+                                await item.click()
+                                logger.info("✅ Opção 'Exportar' clicada (estratégia alternativa)!")
+                                break
+                        except:
+                            continue
+                except Exception as e2:
+                    logger.error(f"Fallback também falhou: {e2}")
+                    raise
+
             logger.info("Exportação solicitada — aguardando 90s para processamento do servidor...")
             await page.wait_for_timeout(90_000)
             await page.screenshot(path=str(output_path / "apos_exportar.png"))
