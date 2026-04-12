@@ -120,60 +120,72 @@ async def extract_shopee_driver_profile() -> Path:
             # 5. CLICAR NA OPÇÃO 1 "EXPORTAR" DO DROPDOWN (NÃO "Histórico de exportações")
             logger.info("Clicando na opção 'Exportar' do dropdown (opção 1)...")
             
-            # O teste mostrou que o dropdown está hidden (visible: False) e os items estão vazios
-            # Precisamos forçar o dropdown a ficar visível e esperar o conteúdo carregar
+            # O HTML do popover mostra que está VAZIO (<!----> são placeholders Vue não renderizados)
+            # O Vue ainda não montou o conteúdo. Usaremos navegação por teclado que é mais confiável.
+            
             try:
-                logger.info("Tornando dropdown visível via JavaScript...")
-                
-                # Estratégia 1: Usar JavaScript para tornar visível e clicar
-                click_result = await page.evaluate("""
-                    async () => {
-                        const popover = document.querySelector('.popover.ssc-tooltip-popover.searcher-with-history-dropdown');
-                        if (!popover) return { success: false, error: 'Popover não encontrado' };
-                        
-                        // Tornar visível
-                        popover.style.display = 'block';
-                        popover.style.visibility = 'visible';
-                        popover.style.opacity = '1';
-                        popover.style.zIndex = '9999';
-                        
-                        // Aguardar conteúdo carregar
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
-                        // Procurar items de menu
-                        const allElements = popover.querySelectorAll('*');
-                        for (let el of allElements) {
-                            const text = el.textContent.trim();
-                            if (text && text.includes('Exportar') && !text.includes('Histórico') && !text.includes('Exportação')) {
-                                el.click();
-                                return { success: true, clicked: text, tag: el.tagName };
-                            }
-                        }
-                        
-                        return { success: false, error: 'Item Exportar não encontrado', popoverHTML: popover.innerHTML.substring(0, 500) };
-                    }
-                """)
-                
-                logger.info(f"Resultado: {click_result}")
-                
-                if click_result.get('success'):
-                    logger.info("✅ Exportação solicitada via JavaScript!")
-                else:
-                    raise Exception(f"JavaScript não conseguiu clicar: {click_result}")
-                    
+                # Estratégia 1: Navegação por teclado (mais confiável)
+                logger.info("Tentando navegação por teclado (Down + Enter)...")
+                await page.wait_for_timeout(1_000)  # Aguardar Vue renderizar
+                await page.keyboard.press("ArrowDown")  # Selecionar primeira opção ("Exportar")
+                await page.wait_for_timeout(300)
+                await page.keyboard.press("Enter")  # Clicar na opção selecionada
+                logger.info("✅ Exportação solicitada via teclado!")
             except Exception as e:
-                logger.warning(f"JavaScript falhou: {e}")
-                logger.info("Tentando force click no botão Exportar...")
+                logger.warning(f"Teclado falhou: {e}")
                 
-                # Estratégia 2: Force click com Playwright
+                # Estratégia 2: Aguardar conteúdo Vue carregar e clicar via JS
                 try:
-                    # Esperar dropdown ficar visível
-                    await page.wait_for_timeout(2_000)
+                    logger.info("Aguardando conteúdo Vue carregar...")
+                    await page.wait_for_timeout(3_000)
                     
-                    # Clicar usando force=True
-                    opcao = page.locator('.popover.ssc-tooltip-popover.searcher-with-history-dropdown >> text=Exportar').first
-                    await opcao.click(force=True, timeout=15_000)
-                    logger.info("✅ Exportação solicitada com force click!")
+                    # Tentar encontrar e clicar no item "Exportar" após aguardar
+                    click_result = await page.evaluate("""
+                        async () => {
+                            // Aguardar mais um pouco
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            
+                            const popover = document.querySelector('.popover.ssc-tooltip-popover.searcher-with-history-dropdown');
+                            if (!popover) return { success: false, error: 'Popover não encontrado' };
+                            
+                            // Forçar visibilidade
+                            popover.style.display = 'block';
+                            popover.style.visibility = 'visible';
+                            popover.style.opacity = '1';
+                            popover.style.zIndex = '9999';
+                            
+                            // Aguardar conteúdo carregar
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            
+                            // Procurar em TODOS os elementos filhos
+                            const allElements = popover.querySelectorAll('*');
+                            for (let el of allElements) {
+                                const text = el.textContent.trim();
+                                if (text && text === 'Exportar') {
+                                    el.click();
+                                    return { success: true, clicked: text, tag: el.tagName };
+                                }
+                            }
+                            
+                            // Se não encontrou "Exportar" exato, tentar com partial match
+                            for (let el of allElements) {
+                                const text = el.textContent.trim();
+                                if (text && text.includes('Exportar') && !text.includes('Histórico') && !text.includes('Exportação')) {
+                                    el.click();
+                                    return { success: true, clicked: text, tag: el.tagName };
+                                }
+                            }
+                            
+                            return { success: false, error: 'Item não encontrado', html: popover.innerHTML.substring(0, 800) };
+                        }
+                    """)
+                    
+                    logger.info(f"Resultado: {click_result}")
+                    if click_result.get('success'):
+                        logger.info("✅ Exportação solicitada via JavaScript!")
+                    else:
+                        raise Exception(f"Não encontrou item: {click_result}")
+                        
                 except Exception as e2:
                     logger.error(f"Todas as estratégias falharam: {e2}")
                     await page.screenshot(path=str(output_path / "erro_dropdown.png"))
