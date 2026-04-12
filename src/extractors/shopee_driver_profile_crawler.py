@@ -103,7 +103,7 @@ async def extract_shopee_driver_profile() -> Path:
             except Exception as e:
                 logger.warning(f"Botão 'Procurar' não encontrado: {e}")
 
-            # 4. ABRIR DROPDOWN DE EXPORTAR e contar "Baixar" visíveis ANTES de disparar
+            # 4. CLICAR NO BOTÃO "EXPORTAR" PARA ABRIR DROPDOWN
             logger.info("Clicando em 'Exportar' para abrir dropdown...")
             try:
                 botao_exportar = page.locator('button:has-text("Exportar")').first
@@ -115,19 +115,44 @@ async def extract_shopee_driver_profile() -> Path:
                 await botao_exportar.click()
 
             await page.wait_for_timeout(2_000)
+            await page.screenshot(path=str(output_path / "dropdown_aberto.png"))
 
-            # Contar "Baixar" visíveis no popup que pode abrir com o dropdown
-            botoes_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")')
-            count_antes = await botoes_baixar.count()
-            logger.info(f"Botões 'Baixar' visíveis antes de exportar: {count_antes}")
-
-            # 5. CLICAR NA OPÇÃO "EXPORTAR" DO DROPDOWN
-            logger.info("Clicando na opção 'Exportar' do dropdown...")
-            opcao = page.locator('text=Exportar').nth(1)
-            await opcao.wait_for(timeout=10_000)
-            await opcao.click()
+            # 5. CLICAR NA OPÇÃO 1 "EXPORTAR" DO DROPDOWN (NÃO "Histórico de exportações")
+            logger.info("Clicando na opção 'Exportar' do dropdown (opção 1)...")
+            # O dropdown tem: opção 1 = "Exportar", opção 2 = "Histórico de exportações"
+            # Precisamos clicar na primeira opção que é apenas "Exportar"
+            try:
+                # Procurar pelo item exato "Exportar" dentro do dropdown
+                # Usar nth(0) para pegar o primeiro elemento com texto exato "Exportar"
+                dropdown_container = page.locator('.ssc-dropdown-menu, [class*="dropdown"], .el-dropdown-menu').first
+                await dropdown_container.wait_for(timeout=10_000)
+                
+                # Dentro do dropdown, encontrar o item "Exportar" (não "Histórico")
+                opcao_exportar = dropdown_container.locator('text=Exportar').first
+                await opcao_exportar.wait_for(timeout=10_000)
+                
+                # Verificar que NÃO é "Histórico de exportações"
+                texto_opcao = await opcao_exportar.text_content()
+                logger.info(f"Opção encontrada: '{texto_opcao.strip()}'")
+                
+                if "Histórico" in texto_opcao or "historico" in texto_opcao.lower():
+                    logger.warning("⚠️ Selecionou 'Histórico' por engano, buscando opção correta...")
+                    # Tentar o próximo elemento
+                    opcao_exportar = page.locator('text=Exportar').nth(1)
+                    await opcao_exportar.wait_for(timeout=5_000)
+                    texto_correto = await opcao_exportar.text_content()
+                    logger.info(f"Opção corrigida: '{texto_correto.strip()}'")
+                
+                await opcao_exportar.click()
+                logger.info("✅ Opção 'Exportar' clicada!")
+            except Exception as e:
+                logger.warning(f"Fallback: tentando clicar 'Exportar' diretamente: {e}")
+                # Fallback: clicar no primeiro text=Exportar
+                await page.locator('text=Exportar').first.click()
+            
             logger.info("Exportação solicitada — aguardando 90s para processamento do servidor...")
             await page.wait_for_timeout(90_000)
+            await page.screenshot(path=str(output_path / "apos_exportar.png"))
 
             # 6. ABRIR PAINEL "ÚLTIMA TAREFA" via ícone de tarefas no header
             logger.info("Abrindo painel 'Última tarefa' via ícone de tarefas...")
@@ -151,28 +176,69 @@ async def extract_shopee_driver_profile() -> Path:
                 await page.screenshot(path=str(output_path / "erro_painel.png"))
                 raise Exception("Não foi possível abrir o painel 'Última tarefa'.")
 
-            # 7. AGUARDAR BOTÃO "BAIXAR" NO PAINEL (com retentativas de 30s)
-            logger.info("Aguardando botão 'Baixar' no painel...")
+            # 7. ENCONTRAR E CLICAR NO BOTÃO "BAIXAR" DA TAREFA "Br Agency Assignment Task"
+            logger.info("Procurando tarefa 'Br Agency Assignment Task' no painel...")
             caminho_arquivo = None
-            botao_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")').first
+            botao_baixar = None
             encontrado = False
-            for tentativa_baixar in range(4):
+            
+            # Aguardar painel carregar completamente
+            await page.wait_for_timeout(5_000)
+            
+            for tentativa_baixar in range(6):
                 try:
-                    await botao_baixar.wait_for(timeout=30_000)
-                    logger.info(f"✅ Botão 'Baixar' encontrado após {tentativa_baixar * 30}s adicionais!")
-                    encontrado = True
-                    break
-                except Exception:
+                    # Estratégia 1: Procurar pela tarefa específica "Br Agency Assignment" ou "Agency Assignment"
+                    logger.info(f"Tentativa {tentativa_baixar + 1}: Procurando por 'Agency Assignment'...")
+                    
+                    # Encontrar o container da tarefa que contém "Agency Assignment"
+                    # O painel tem múltiplas tarefas, precisamos encontrar a correta
+                    tarefas = page.locator('[class*="task"], [class*="item"]').all()
+                    
+                    for tarefa in tarefas:
+                        try:
+                            texto_tarefa = await tarefa.text_content(timeout=2_000)
+                            if texto_tarefa and "Agency Assignment" in texto_tarefa:
+                                logger.info(f"✅ Tarefa 'Agency Assignment' encontrada!")
+                                # Dentro desta tarefa, encontrar o botão "Baixar"
+                                botao_baixar = tarefa.locator('button:has-text("Baixar"), button:has-text("Download")').first
+                                await botao_baixar.wait_for(timeout=5_000)
+                                encontrado = True
+                                logger.info("✅ Botão 'Baixar' da tarefa correta encontrado!")
+                                break
+                        except:
+                            continue
+                    
+                    if encontrado:
+                        break
+                    
+                    # Estratégia 2: Se não encontrou por texto, reabrir o painel para atualizar
+                    logger.info(f"Tarefa 'Agency Assignment' não encontrada — reabrindo painel...")
+                    await page.keyboard.press("Escape")
+                    await page.wait_for_timeout(2_000)
+                    icone = page.locator('div[data-v-13320df0].icon').first
+                    await icone.wait_for(timeout=5_000)
+                    await icone.click()
+                    await page.wait_for_timeout(3_000)
+                    await page.screenshot(path=str(output_path / f"painel_atualizado_{tentativa_baixar}.png"))
+                    
+                except Exception as e:
                     elapsed_extra = (tentativa_baixar + 1) * 30
-                    logger.info(f"Botão 'Baixar' não visível ainda — aguardando mais 30s ({elapsed_extra}s extra)...")
-                    await page.screenshot(path=str(output_path / f"aguardando_baixar_{elapsed_extra}s.png"))
+                    logger.warning(f"Tentativa {tentativa_baixar + 1} falhou: {e}")
+                    await page.screenshot(path=str(output_path / f"erro_tentativa_{tentativa_baixar}.png"))
 
             if not encontrado:
-                await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
-                raise Exception("Timeout: botão 'Baixar' não apareceu no painel após 120s adicionais.")
+                # Fallback final: usar o primeiro botão "Baixar" mas com validação rigorosa depois
+                logger.warning("⚠️ Não foi possível identificar tarefa específica, usando fallback...")
+                botao_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")').first
+                try:
+                    await botao_baixar.wait_for(timeout=30_000)
+                    encontrado = True
+                except:
+                    await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
+                    raise Exception("Timeout: botão 'Baixar' não apareceu no painel após 180s adicionais.")
 
-            # 8. DOWNLOAD — clica no PRIMEIRO botão "Baixar" (mais recente, topo do painel)
-            logger.info("Clicando em 'Baixar' no export mais recente...")
+            # 8. DOWNLOAD — clica no botão "Baixar" da tarefa correta
+            logger.info("Clicando em 'Baixar' na tarefa 'Agency Assignment'...")
             async with page.expect_download(timeout=120_000) as download_info:
                 await botao_baixar.click()
 
@@ -181,6 +247,7 @@ async def extract_shopee_driver_profile() -> Path:
             caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
             await download.save_as(str(caminho_arquivo))
             logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+            logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
 
             # 9. VALIDAÇÃO: Verificar se o arquivo baixado é realmente de driver profile
             logger.info("Validando arquivo baixado...")
