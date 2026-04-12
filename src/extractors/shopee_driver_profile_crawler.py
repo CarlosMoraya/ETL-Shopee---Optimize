@@ -217,43 +217,54 @@ async def extract_shopee_driver_profile() -> Path:
                 await page.screenshot(path=str(output_path / "erro_painel.png"))
                 raise Exception("Não foi possível abrir o painel 'Última tarefa'.")
 
-            # 7. ENCONTRAR E CLICAR NO BOTÃO "BAIXAR" DA TAREFA "Br Agency Assignment Task"
-            logger.info("Procurando tarefa 'Br Agency Assignment Task' no painel...")
+            # 7. ENCONTRAR E CLICAR NO BOTÃO "BAIXAR" DA TAREFA "Spx Driver"
+            logger.info("Procurando tarefa 'Spx Driver' no painel...")
             caminho_arquivo = None
-            botao_baixar = None
             encontrado = False
-            
+
             # Aguardar painel carregar completamente
             await page.wait_for_timeout(5_000)
-            
+
+            # Configurar listener de download ANTES de clicar
+            download_promise = None
+
             for tentativa_baixar in range(6):
                 try:
-                    # Estratégia 1: Procurar pela tarefa específica "Br Agency Assignment" ou "Agency Assignment"
-                    logger.info(f"Tentativa {tentativa_baixar + 1}: Procurando por 'Agency Assignment'...")
+                    # Estratégia 1: Procurar pela tarefa específica "Spx Driver"
+                    logger.info(f"Tentativa {tentativa_baixar + 1}: Procurando por 'Spx Driver'...")
+
+                    # Usar JavaScript para encontrar e clicar na tarefa correta
+                    click_result = await page.evaluate("""
+                        () => {
+                            const results = [];
+                            document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
+                                const text = el.textContent || '';
+                                if (text.includes('Spx Driver') || text.includes('spx_driver')) {
+                                    const buttons = el.querySelectorAll('button');
+                                    buttons.forEach(btn => {
+                                        if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
+                                            btn.click();
+                                            results.push({ 
+                                                success: true, 
+                                                taskText: text.substring(0, 100) 
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+                            return results.length > 0 ? results[0] : { success: false, error: 'Spx Driver não encontrado' };
+                        }
+                    """)
                     
-                    # Encontrar o container da tarefa que contém "Agency Assignment"
-                    # O painel tem múltiplas tarefas, precisamos encontrar a correta
-                    tarefas = page.locator('[class*="task"], [class*="item"]').all()
-                    
-                    for tarefa in tarefas:
-                        try:
-                            texto_tarefa = await tarefa.text_content(timeout=2_000)
-                            if texto_tarefa and "Agency Assignment" in texto_tarefa:
-                                logger.info(f"✅ Tarefa 'Agency Assignment' encontrada!")
-                                # Dentro desta tarefa, encontrar o botão "Baixar"
-                                botao_baixar = tarefa.locator('button:has-text("Baixar"), button:has-text("Download")').first
-                                await botao_baixar.wait_for(timeout=5_000)
-                                encontrado = True
-                                logger.info("✅ Botão 'Baixar' da tarefa correta encontrado!")
-                                break
-                        except:
-                            continue
-                    
-                    if encontrado:
+                    if click_result.get('success'):
+                        logger.info(f"✅ Tarefa 'Spx Driver' encontrada e botão clicado: {click_result.get('taskText')}")
+                        encontrado = True
                         break
-                    
-                    # Estratégia 2: Se não encontrou por texto, reabrir o painel para atualizar
-                    logger.info(f"Tarefa 'Agency Assignment' não encontrada — reabrindo painel...")
+                    else:
+                        logger.warning(f"⚠️ {click_result.get('error')}")
+
+                    # Estratégia 2: Se não encontrou, reabrir o painel para atualizar
+                    logger.info(f"Reabrindo painel para atualizar...")
                     await page.keyboard.press("Escape")
                     await page.wait_for_timeout(2_000)
                     icone = page.locator('div[data-v-13320df0].icon').first
@@ -261,29 +272,49 @@ async def extract_shopee_driver_profile() -> Path:
                     await icone.click()
                     await page.wait_for_timeout(3_000)
                     await page.screenshot(path=str(output_path / f"painel_atualizado_{tentativa_baixar}.png"))
-                    
+
                 except Exception as e:
-                    elapsed_extra = (tentativa_baixar + 1) * 30
                     logger.warning(f"Tentativa {tentativa_baixar + 1} falhou: {e}")
                     await page.screenshot(path=str(output_path / f"erro_tentativa_{tentativa_baixar}.png"))
 
             if not encontrado:
-                # Fallback final: usar o primeiro botão "Baixar" mas com validação rigorosa depois
-                logger.warning("⚠️ Não foi possível identificar tarefa específica, usando fallback...")
-                botao_baixar = page.locator('button:has-text("Baixar"), button:has-text("Download")').first
-                try:
-                    await botao_baixar.wait_for(timeout=30_000)
-                    encontrado = True
-                except:
+                # Fallback final: clicar no PRIMEIRO botão "Baixar" via JavaScript
+                logger.warning("⚠️ Não encontrou 'Spx Driver', clicando no primeiro botão 'Baixar'...")
+                click_result = await page.evaluate("""
+                    () => {
+                        const buttons = document.querySelectorAll('button');
+                        for (let btn of buttons) {
+                            if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
+                                btn.click();
+                                return { success: true };
+                            }
+                        }
+                        return { success: false };
+                    }
+                """)
+                if not click_result.get('success'):
                     await page.screenshot(path=str(output_path / "erro_sem_baixar.png"))
-                    raise Exception("Timeout: botão 'Baixar' não apareceu no painel após 180s adicionais.")
+                    raise Exception("Timeout: botão 'Baixar' não apareceu no painel.")
 
-            # 8. DOWNLOAD — clica no botão "Baixar" da tarefa correta
-            logger.info("Clicando em 'Baixar' na tarefa 'Agency Assignment'...")
-            async with page.expect_download(timeout=120_000) as download_info:
-                await botao_baixar.click()
-
-            download = await download_info.value
+            # 8. AGUARDAR DOWNLOAD
+            logger.info("Aguardando download iniciar...")
+            # Aguardar o download ser completado (pode levar alguns segundos)
+            await page.wait_for_timeout(10_000)
+            
+            # Obter o último download realizado
+            downloads = context.downloads
+            if len(downloads) == 0:
+                # Se não há downloads, aguardar mais um pouco
+                logger.info("Nenhum download detectado ainda, aguardando...")
+                await page.wait_for_timeout(20_000)
+                downloads = context.downloads
+            
+            if len(downloads) == 0:
+                await page.screenshot(path=str(output_path / "erro_sem_download.png"))
+                raise Exception("Nenhum arquivo foi baixado!")
+            
+            # Pegar o download mais recente
+            download = downloads[-1]
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
             await download.save_as(str(caminho_arquivo))
