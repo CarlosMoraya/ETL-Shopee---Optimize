@@ -119,53 +119,46 @@ async def extract_shopee_driver_profile() -> Path:
 
             # 5. CLICAR NA OPÇÃO 1 "EXPORTAR" DO DROPDOWN (NÃO "Histórico de exportações")
             logger.info("Clicando na opção 'Exportar' do dropdown (opção 1)...")
-            # O dropdown tem: opção 1 = "Exportar", opção 2 = "Histórico de exportações"
-            # Precisamos clicar na primeira opção que é apenas "Exportar"
+            
+            # Estratégia 1: Tentar clicar diretamente usando keyboard (Tab + Enter)
+            # Isso funciona mesmo com elementos ocultos
             try:
-                # Baseado no log, o dropdown usa a classe: popover ssc-tooltip-popover searcher-with-history-dropdown
-                dropdown_container = page.locator('.popover.ssc-tooltip-popover.searcher-with-history-dropdown, .ssc-tooltip-popover.searcher-with-history-dropdown').first
-                await dropdown_container.wait_for(timeout=10_000)
-                logger.info("✅ Container do dropdown encontrado!")
-                
-                # Dentro do dropdown, encontrar itens de menu (geralmente li ou div com role="menuitem")
-                # Procurar pelo item "Exportar" que NÃO contenha "Histórico"
-                opcao_exportar = dropdown_container.locator('text=Exportar').first
-                await opcao_exportar.wait_for(timeout=10_000)
-                
-                # Verificar que NÃO é "Histórico de exportações"
-                texto_opcao = await opcao_exportar.text_content()
-                logger.info(f"Opção encontrada: '{texto_opcao.strip()}'")
-                
-                if "Histórico" in texto_opcao or "historico" in texto_opcao.lower():
-                    logger.warning("⚠️ Selecionou 'Histórico' por engano, buscando opção correta...")
-                    # Tentar o próximo elemento
-                    opcao_exportar = page.locator('text=Exportar').nth(1)
-                    await opcao_exportar.wait_for(timeout=5_000)
-                    texto_correto = await opcao_exportar.text_content()
-                    logger.info(f"Opção corrigida: '{texto_correto.strip()}'")
-                
-                await opcao_exportar.click()
-                logger.info("✅ Opção 'Exportar' clicada!")
+                logger.info("Tentando navegação por teclado...")
+                await page.keyboard.press("Tab")
+                await page.wait_for_timeout(500)
+                await page.keyboard.press("Enter")
+                logger.info("✅ Exportação solicitada via teclado!")
             except Exception as e:
-                logger.warning(f"Erro ao localizar dropdown: {e}")
-                logger.info("Tentando estratégia alternativa: clicar diretamente no item do menu...")
-                # Estratégia alternativa: procurar por li/div dentro do popover
+                logger.warning(f"Teclado falhou: {e}")
+                
+                # Estratégia 2: Usar evaluate para clicar via JavaScript (ignora visibility)
                 try:
-                    # Procurar items de menu no popover
-                    menu_items = page.locator('.popover.ssc-tooltip-popover.searcher-with-history-dropdown li, .popover.ssc-tooltip-popover.searcher-with-history-dropdown [role="menuitem"]').all()
-                    for item in menu_items:
-                        try:
-                            texto = await item.text_content(timeout=2_000)
-                            if texto and "Exportar" in texto and "Histórico" not in texto:
-                                logger.info(f"Clicando em item: '{texto.strip()}'")
-                                await item.click()
-                                logger.info("✅ Opção 'Exportar' clicada (estratégia alternativa)!")
-                                break
-                        except:
-                            continue
+                    logger.info("Tentando click via JavaScript...")
+                    await page.evaluate("""
+                        () => {
+                            const items = document.querySelectorAll('.popover.ssc-tooltip-popover.searcher-with-history-dropdown li, .popover.ssc-tooltip-popover.searcher-with-history-dropdown [role="menuitem"], .popover.ssc-tooltip-popover.searcher-with-history-dropdown div');
+                            for (let item of items) {
+                                if (item.textContent.includes('Exportar') && !item.textContent.includes('Histórico')) {
+                                    item.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }
+                    """)
+                    logger.info("✅ Exportação solicitada via JavaScript!")
                 except Exception as e2:
-                    logger.error(f"Fallback também falhou: {e2}")
-                    raise
+                    logger.warning(f"JavaScript falhou: {e2}")
+                    
+                    # Estratégia 3: Fallback - forçar click com force=True
+                    try:
+                        logger.info("Tentando force click...")
+                        opcao = page.locator('text=Exportar').first
+                        await opcao.click(force=True, timeout=10_000)
+                        logger.info("✅ Exportação solicitada com force click!")
+                    except Exception as e3:
+                        logger.error(f"Todas as estratégias falharam: {e3}")
+                        raise
 
             logger.info("Exportação solicitada — aguardando 90s para processamento do servidor...")
             await page.wait_for_timeout(90_000)
