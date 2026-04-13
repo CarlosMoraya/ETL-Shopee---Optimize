@@ -13,6 +13,7 @@ Fluxo:
 """
 import asyncio
 import os
+import zipfile
 from pathlib import Path
 from datetime import datetime
 
@@ -23,6 +24,29 @@ from src.utils import get_logger, DATA_RAW_DIR
 logger = get_logger(__name__)
 
 PORTAL_URL = "https://logistics.myagencyservice.com.br/"
+
+
+def _ler_arquivo(caminho: Path, nrows=None):
+    """Lê CSV, Excel ou ZIP (extraindo o primeiro CSV/Excel interno)."""
+    import pandas as pd
+
+    sufixo = caminho.suffix.lower()
+    if sufixo == ".zip":
+        with zipfile.ZipFile(caminho) as zf:
+            nomes = zf.namelist()
+            # Prioriza CSV; se não houver, pega o primeiro Excel
+            alvo = next((n for n in nomes if n.lower().endswith(".csv")), None) or \
+                   next((n for n in nomes if n.lower().endswith((".xlsx", ".xls"))), None)
+            if alvo is None:
+                raise Exception(f"ZIP não contém CSV nem Excel. Arquivos: {nomes}")
+            logger.info(f"Extraindo '{alvo}' do ZIP...")
+            with zf.open(alvo) as f:
+                if alvo.lower().endswith(".csv"):
+                    return pd.read_csv(f, nrows=nrows)
+                return pd.read_excel(f, nrows=nrows)
+    if sufixo == ".csv":
+        return pd.read_csv(caminho, nrows=nrows)
+    return pd.read_excel(caminho, nrows=nrows)
 DRIVER_PROFILE_URL = "https://logistics.myagencyservice.com.br/#/workforce/driver-profile/list"
 
 
@@ -412,12 +436,7 @@ async def extract_shopee_driver_profile() -> Path:
 
             # 9. VALIDAÇÃO: Verificar se o arquivo baixado é realmente de driver profile
             logger.info("Validando arquivo baixado...")
-            sufixo_validacao = Path(caminho_arquivo).suffix.lower()
-            df_validacao = None
-            if sufixo_validacao == ".csv":
-                df_validacao = pd.read_csv(caminho_arquivo, nrows=5)
-            else:
-                df_validacao = pd.read_excel(caminho_arquivo, nrows=5)
+            df_validacao = _ler_arquivo(Path(caminho_arquivo), nrows=5)
 
             colunas_lower = [c.lower() for c in df_validacao.columns]
             colunas_texto = " ".join(colunas_lower)
@@ -451,11 +470,7 @@ async def extract_shopee_driver_profile() -> Path:
 
     # 10. PROCESSAR COM PANDAS (arquivo já foi lido na validação, mas vamos recarregar completo)
     logger.info("Processando arquivo...")
-    sufixo = Path(caminho_arquivo).suffix.lower()
-    if sufixo == ".csv":
-        df = pd.read_csv(caminho_arquivo)
-    else:
-        df = pd.read_excel(caminho_arquivo)
+    df = _ler_arquivo(Path(caminho_arquivo))
     
     logger.info(f"✅ Arquivo de Driver Profile confirmado com {len(df)} linhas")
 
