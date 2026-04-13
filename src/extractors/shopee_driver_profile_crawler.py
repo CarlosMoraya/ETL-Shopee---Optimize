@@ -124,98 +124,123 @@ async def extract_shopee_driver_profile() -> Path:
             hora_antes_export = datetime.now()
             logger.info(f"🕐 Horário antes de clicar em Exportar: {hora_antes_export.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            # O Vue NÃO renderiza o dropdown em headless - está sempre vazio (<!---->)
-            # Estratégia: Usar keyboard navigation que funciona SEMPRE
+            # O Vue NÃO renderiza dropdown em headless (sempre mostra <!---->)
+            # ArrowDown+Enter não funciona porque não há elementos focáveis
+            # SOLUÇÃO: Navegar diretamente para página de Histórico de Exportação
+            
             export_sucesso = False
             
-            # Estratégia 1: ArrowDown + Enter (mais confiável em headless)
+            # Estratégia 1: Navegar para /taskCenter/exportTaskCenter e acionar exportação
             try:
-                logger.info("Tentativa 1: Keyboard navigation (ArrowDown + Enter)...")
-                await page.wait_for_timeout(1_000)
-                await page.keyboard.press("ArrowDown")
+                logger.info("Tentativa 1: Navegando para página de Histórico de Exportação...")
+                
+                # Fechar dropdown atual
+                await page.keyboard.press("Escape")
                 await page.wait_for_timeout(500)
-                await page.keyboard.press("Enter")
-                logger.info("✅ Exportação solicitada via teclado!")
+                
+                # Navegar para página de histórico de exportações
+                await page.goto("https://logistics.myagencyservice.com.br/#/taskCenter/exportTaskCenter", wait_until="domcontentloaded", timeout=30_000)
+                await page.wait_for_timeout(3_000)
+                await page.screenshot(path=str(output_path / "pagina_historico.png"))
+                
+                # Clicar no botão "Exportar" na página de histórico
+                export_btn = page.locator('button:has-text("Exportar"), button:has-text("Export")').first
+                await export_btn.wait_for(timeout=15_000)
+                await export_btn.click()
+                logger.info("✅ Botão 'Exportar' clicado na página de histórico!")
                 export_sucesso = True
+                
+                # Aguardar um pouco para a exportação ser processada
+                await page.wait_for_timeout(5_000)
+                
             except Exception as e:
-                logger.warning(f"Teclado falhou: {e}")
+                logger.warning(f"Página de histórico falhou: {e}")
 
-            # Estratégia 2: Click via coordenadas do primeiro item do dropdown
+            # Estratégia 2: Click por coordenadas (se estratégia 1 falhou)
             if not export_sucesso:
                 try:
-                    logger.info("Tentativa 2: Click via coordenadas do primeiro item...")
+                    logger.info("Tentativa 2: Voltando para Driver Profile e clicando por coordenadas...")
+                    
+                    # Voltar para página de Driver Profile
+                    await page.goto(DRIVER_PROFILE_URL, wait_until="domcontentloaded", timeout=30_000)
+                    await page.wait_for_timeout(3_000)
+                    await page.wait_for_selector(".ssc-react-pro-table-table", timeout=30_000)
                     await page.wait_for_timeout(2_000)
                     
-                    # Obter coordenadas do dropdown e clicar no primeiro item
-                    coords = await page.evaluate("""
+                    # Clicar em "Procurar" novamente
+                    try:
+                        botao_procurar = page.locator('button:has-text("Procurar")').first
+                        await botao_procurar.click()
+                        await page.wait_for_timeout(5_000)
+                    except:
+                        pass
+                    
+                    # Abrir dropdown
+                    botao_exportar = page.locator('button:has-text("Exportar")').first
+                    await botao_exportar.click()
+                    await page.wait_for_timeout(2_000)
+                    
+                    # Obter coordenadas do botão e calcular posição do primeiro item
+                    button_coords = await page.evaluate("""
                         () => {
-                            const popover = document.querySelector('.popover.ssc-tooltip-popover.searcher-with-history-dropdown');
-                            if (!popover) return null;
-                            
-                            // Forçar visibilidade
-                            popover.style.display = 'block';
-                            popover.style.visibility = 'visible';
-                            popover.style.opacity = '1';
-                            popover.style.zIndex = '99999';
-                            popover.style.pointerEvents = 'auto';
-                            
-                            const rect = popover.getBoundingClientRect();
-                            // Calcular posição do primeiro item (aproximadamente 40px abaixo do topo)
+                            const btn = document.querySelector('button:has-text("Exportar")');
+                            if (!btn) return null;
+                            const rect = btn.getBoundingClientRect();
                             return {
                                 x: rect.left + rect.width / 2,
-                                y: rect.top + 40,  // Primeiro item está ~40px abaixo
-                                width: rect.width,
-                                height: rect.height
+                                y: rect.bottom + 25  // ~25px abaixo do botão (primeiro item)
                             };
                         }
                     """)
                     
-                    if coords:
-                        logger.info(f"Clicando nas coordenadas: ({coords['x']}, {coords['y']})")
-                        await page.mouse.click(coords['x'], coords['y'])
+                    if button_coords:
+                        logger.info(f"Clicando nas coordenadas: ({button_coords['x']}, {button_coords['y']})")
+                        await page.mouse.click(button_coords['x'], button_coords['y'])
                         logger.info("✅ Click via coordenadas realizado!")
                         export_sucesso = True
                     else:
-                        logger.warning("Não conseguiu obter coordenadas")
+                        logger.warning("Não conseguiu obter coordenadas do botão")
                         
                 except Exception as e:
                     logger.warning(f"Coordenadas falharam: {e}")
 
-            # Estratégia 3: Usar a página "Histórico de exportação" para acionar exportação
+            # Estratégia 3: Fallback - clicar no primeiro elemento <li> ou [role="menuitem"] via JS
             if not export_sucesso:
                 try:
-                    logger.info("Tentativa 3: Navegar para 'Histórico de exportação' e acionar...")
-                    # Fechar dropdown atual
-                    await page.keyboard.press("Escape")
-                    await page.wait_for_timeout(1_000)
-                    
-                    # Abrir dropdown novamente
-                    botao_exportar = page.locator('button:has-text("Exportar")').first
-                    await botao_exportar.click()
-                    await page.wait_for_timeout(1_000)
-                    
-                    # ArrowDown DUAS vezes para ir para "Histórico de exportação"
-                    await page.keyboard.press("ArrowDown")
-                    await page.wait_for_timeout(300)
-                    await page.keyboard.press("ArrowDown")
-                    await page.wait_for_timeout(300)
-                    await page.keyboard.press("Enter")
+                    logger.info("Tentativa 3: Click via JavaScript no primeiro elemento clicável...")
                     await page.wait_for_timeout(2_000)
                     
-                    # Agora estamos na página de histórico - acionar exportação de lá
-                    # Clicar em botão de exportar na página de histórico
-                    export_btn = page.locator('button:has-text("Exportar"), button:has-text("Export")').first
-                    await export_btn.wait_for(timeout=10_000)
-                    await export_btn.click()
-                    logger.info("✅ Exportação acionada via Histórico!")
-                    export_sucesso = True
+                    result = await page.evaluate("""
+                        () => {
+                            // Procurar em TODO o documento por elementos de menu
+                            const menuItems = document.querySelectorAll('li, [role="menuitem"], .el-dropdown-menu__item');
+                            if (menuItems.length > 0) {
+                                // Clicar no primeiro item de menu visível
+                                for (let item of menuItems) {
+                                    const rect = item.getBoundingClientRect();
+                                    if (rect.width > 0 && rect.height > 0) {
+                                        item.click();
+                                        return { success: true, tag: item.tagName, text: item.textContent.substring(0, 50) };
+                                    }
+                                }
+                            }
+                            return { success: false, error: 'Nenhum item de menu encontrado' };
+                        }
+                    """)
+                    
+                    if result.get('success'):
+                        logger.info(f"✅ Click JS realizado em: {result.get('text')}")
+                        export_sucesso = True
+                    else:
+                        logger.warning(f"JS falhou: {result.get('error')}")
+                        
                 except Exception as e:
-                    logger.warning(f"Histórico falhou: {e}")
+                    logger.warning(f"JavaScript falhou: {e}")
 
             if not export_sucesso:
-                logger.error("❌ Todas as estratégias falharam!")
+                logger.error("❌ Todas as estratégias de exportação falharam!")
                 await page.screenshot(path=str(output_path / "erro_exportar.png"))
-                raise Exception("Falha ao clicar em Exportar no dropdown")
+                raise Exception("Falha ao acionar exportação")
 
             # Aguardar processamento da exportação
             logger.info(f"⏳ Exportação iniciada às {hora_antes_export.strftime('%H:%M:%S')}")
