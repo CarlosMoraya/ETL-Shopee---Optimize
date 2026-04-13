@@ -132,150 +132,128 @@ async def extract_shopee_driver_profile() -> Path:
             except Exception as e:
                 logger.warning(f"Botão 'Procurar' não encontrado: {e}")
 
-            # 4. CLICAR NO BOTÃO "EXPORTAR" PARA ABRIR DROPDOWN
+            # 4+5. CLICAR EM "EXPORTAR" E ACIONAR O ITEM DO DROPDOWN
             logger.info("Clicando em 'Exportar' para abrir dropdown...")
-            try:
-                botao_exportar = page.locator('button:has-text("Exportar")').first
-                await botao_exportar.wait_for(timeout=10_000)
-                await botao_exportar.click()
-            except Exception:
-                botao_exportar = page.locator('button:has-text("Export")').first
-                await botao_exportar.wait_for(timeout=10_000)
-                await botao_exportar.click()
+            botao_exportar = page.locator('button:has-text("Exportar"), button:has-text("Export")').first
+            await botao_exportar.wait_for(timeout=10_000)
+            await botao_exportar.click()
 
-            await page.wait_for_timeout(2_000)
+            hora_antes_export = datetime.now()
+            logger.info(f"🕐 Horário do clique em Exportar: {hora_antes_export.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            # Aguardar dropdown abrir e capturar screenshot diagnóstico
+            await page.wait_for_timeout(1_000)
             await page.screenshot(path=str(output_path / "dropdown_aberto.png"))
 
-            # 5. CLICAR NA OPÇÃO 1 "EXPORTAR" DO DROPDOWN (NÃO "Histórico de exportações")
-            logger.info("Clicando na opção 'Exportar' do dropdown (opção 1)...")
-            
-            # Registrar horário ANTES de clicar para verificar depois
-            hora_antes_export = datetime.now()
-            logger.info(f"🕐 Horário antes de clicar em Exportar: {hora_antes_export.strftime('%Y-%m-%d %H:%M:%S')}")
-
-            # O Vue NÃO renderiza dropdown em headless (sempre mostra <!---->)
-            # ArrowDown+Enter não funciona porque não há elementos focáveis
-            # SOLUÇÃO: Navegar diretamente para página de Histórico de Exportação
-            
             export_sucesso = False
-            
-            # Estratégia 1: Navegar para /taskCenter/exportTaskCenter e acionar exportação
-            try:
-                logger.info("Tentativa 1: Navegando para página de Histórico de Exportação...")
-                
-                # Fechar dropdown atual
-                await page.keyboard.press("Escape")
-                await page.wait_for_timeout(500)
-                
-                # Navegar para página de histórico de exportações
-                await page.goto("https://logistics.myagencyservice.com.br/#/taskCenter/exportTaskCenter", wait_until="domcontentloaded", timeout=30_000)
-                await page.wait_for_timeout(3_000)
-                await page.screenshot(path=str(output_path / "pagina_historico.png"))
-                
-                # Clicar no botão "Exportar" na página de histórico
-                export_btn = page.locator('button:has-text("Exportar"), button:has-text("Export")').first
-                await export_btn.wait_for(timeout=15_000)
-                await export_btn.click()
-                logger.info("✅ Botão 'Exportar' clicado na página de histórico!")
-                export_sucesso = True
-                
-                # Aguardar um pouco para a exportação ser processada
-                await page.wait_for_timeout(5_000)
-                
-            except Exception as e:
-                logger.warning(f"Página de histórico falhou: {e}")
 
-            # Estratégia 2: Click por coordenadas (se estratégia 1 falhou)
-            if not export_sucesso:
-                try:
-                    logger.info("Tentativa 2: Voltando para Driver Profile e clicando por coordenadas...")
-                    
-                    # Voltar para página de Driver Profile
-                    await page.goto(DRIVER_PROFILE_URL, wait_until="domcontentloaded", timeout=30_000)
-                    await page.wait_for_timeout(3_000)
-                    await page.wait_for_selector(".ssc-react-pro-table-table", timeout=30_000)
-                    await page.wait_for_timeout(2_000)
-                    
-                    # Clicar em "Procurar" novamente
+            # Estratégia 1: Playwright locator nativo — suporta :has-text e force click
+            logger.info("Tentativa 1: Localizando item do dropdown via Playwright...")
+            for sel in [
+                '.el-dropdown-menu__item:first-child',
+                '.el-dropdown-menu li:first-child',
+                'li.el-dropdown-menu__item',
+                '[role="menuitem"]',
+            ]:
+                item = page.locator(sel).first
+                cnt = await item.count()
+                if cnt > 0:
+                    txt = await item.inner_text()
+                    logger.info(f"Item encontrado via '{sel}': '{txt}' — clicando...")
                     try:
-                        botao_procurar = page.locator('button:has-text("Procurar")').first
-                        await botao_procurar.click()
-                        await page.wait_for_timeout(5_000)
-                    except:
-                        pass
-                    
-                    # Abrir dropdown
-                    botao_exportar = page.locator('button:has-text("Exportar")').first
-                    await botao_exportar.click()
-                    await page.wait_for_timeout(2_000)
-                    
-                    # Obter coordenadas do botão e calcular posição do primeiro item
-                    button_coords = await page.evaluate("""
-                        () => {
-                            const btn = document.querySelector('button:has-text("Exportar")');
-                            if (!btn) return null;
-                            const rect = btn.getBoundingClientRect();
-                            return {
-                                x: rect.left + rect.width / 2,
-                                y: rect.bottom + 25  // ~25px abaixo do botão (primeiro item)
-                            };
-                        }
-                    """)
-                    
-                    if button_coords:
-                        logger.info(f"Clicando nas coordenadas: ({button_coords['x']}, {button_coords['y']})")
-                        await page.mouse.click(button_coords['x'], button_coords['y'])
-                        logger.info("✅ Click via coordenadas realizado!")
-                        export_sucesso = True
-                    else:
-                        logger.warning("Não conseguiu obter coordenadas do botão")
-                        
-                except Exception as e:
-                    logger.warning(f"Coordenadas falharam: {e}")
+                        await item.click(timeout=2_000)
+                    except Exception:
+                        await item.click(force=True)
+                    logger.info("✅ Item de dropdown clicado!")
+                    export_sucesso = True
+                    break
 
-            # Estratégia 3: Fallback - clicar no primeiro elemento <li> ou [role="menuitem"] via JS
+            # Estratégia 2: Teclado (ArrowDown + Enter no botão Exportar)
             if not export_sucesso:
+                logger.info("Tentativa 2: Teclado (ArrowDown + Enter)...")
                 try:
-                    logger.info("Tentativa 3: Click via JavaScript no primeiro elemento clicável...")
-                    await page.wait_for_timeout(2_000)
-                    
+                    await botao_exportar.click()
+                    await page.wait_for_timeout(400)
+                    await page.keyboard.press("ArrowDown")
+                    await page.wait_for_timeout(200)
+                    await page.keyboard.press("Enter")
+                    await page.wait_for_timeout(1_000)
+                    export_sucesso = True
+                    logger.info("✅ ArrowDown + Enter executado!")
+                except Exception as e:
+                    logger.warning(f"Teclado falhou: {e}")
+
+            # Estratégia 3: JavaScript — APENAS em elementos de dropdown (não navegação)
+            if not export_sucesso:
+                logger.info("Tentativa 3: JavaScript no menu dropdown...")
+                try:
+                    await botao_exportar.click()
+                    await page.wait_for_timeout(500)
                     result = await page.evaluate("""
                         () => {
-                            // Procurar em TODO o documento por elementos de menu
-                            const menuItems = document.querySelectorAll('li, [role="menuitem"], .el-dropdown-menu__item');
-                            if (menuItems.length > 0) {
-                                // Clicar no primeiro item de menu visível
-                                for (let item of menuItems) {
-                                    const rect = item.getBoundingClientRect();
-                                    if (rect.width > 0 && rect.height > 0) {
+                            // Busca APENAS em menus dropdown, não em navegação lateral
+                            const menus = document.querySelectorAll(
+                                '.el-dropdown-menu, [class*="dropdown-menu"]'
+                            );
+                            for (const menu of menus) {
+                                const items = menu.querySelectorAll('li, .el-dropdown-menu__item');
+                                for (const item of items) {
+                                    const txt = item.textContent.trim();
+                                    if (txt && !txt.toLowerCase().includes('hist')) {
                                         item.click();
-                                        return { success: true, tag: item.tagName, text: item.textContent.substring(0, 50) };
+                                        return { success: true, text: txt };
                                     }
                                 }
+                                if (items.length > 0) {
+                                    items[0].click();
+                                    return { success: true, text: items[0].textContent.trim() };
+                                }
                             }
-                            return { success: false, error: 'Nenhum item de menu encontrado' };
+                            return { success: false, reason: 'Nenhum menu dropdown encontrado no DOM' };
                         }
                     """)
-                    
                     if result.get('success'):
-                        logger.info(f"✅ Click JS realizado em: {result.get('text')}")
+                        logger.info(f"✅ JS dropdown: '{result.get('text')}'")
                         export_sucesso = True
                     else:
-                        logger.warning(f"JS falhou: {result.get('error')}")
-                        
+                        logger.warning(f"JS: {result.get('reason')}")
                 except Exception as e:
                     logger.warning(f"JavaScript falhou: {e}")
 
+            # Estratégia 4: Coordenadas relativas ao botão Exportar
             if not export_sucesso:
-                logger.error("❌ Todas as estratégias de exportação falharam!")
+                logger.info("Tentativa 4: Click por coordenadas abaixo do botão...")
+                try:
+                    await botao_exportar.click()
+                    await page.wait_for_timeout(500)
+                    coords = await page.evaluate("""
+                        () => {
+                            const buttons = Array.from(document.querySelectorAll('button'));
+                            const btn = buttons.find(b => b.textContent.trim() === 'Exportar' || b.textContent.trim() === 'Export');
+                            if (!btn) return null;
+                            const rect = btn.getBoundingClientRect();
+                            return { x: rect.left + rect.width / 2, y: rect.bottom + 20 };
+                        }
+                    """)
+                    if coords:
+                        logger.info(f"Clicando em ({coords['x']:.0f}, {coords['y']:.0f})...")
+                        await page.mouse.click(coords['x'], coords['y'])
+                        export_sucesso = True
+                        logger.info("✅ Click por coordenadas!")
+                    else:
+                        logger.warning("Botão Exportar não encontrado via JS")
+                except Exception as e:
+                    logger.warning(f"Coordenadas falharam: {e}")
+
+            if not export_sucesso:
                 await page.screenshot(path=str(output_path / "erro_exportar.png"))
-                raise Exception("Falha ao acionar exportação")
+                raise Exception("Não foi possível acionar a exportação via dropdown")
 
             # Aguardar processamento da exportação
             logger.info(f"⏳ Exportação iniciada às {hora_antes_export.strftime('%H:%M:%S')}")
-            logger.info("Aguardando 90s para processamento do servidor...")
-            await page.wait_for_timeout(90_000)
-            
+            logger.info("Aguardando 120s para processamento do servidor...")
+            await page.wait_for_timeout(120_000)
+
             hora_depois_export = datetime.now()
             logger.info(f"✅ Processamento concluído às {hora_depois_export.strftime('%H:%M:%S')}")
             await page.screenshot(path=str(output_path / "apos_exportar.png"))
@@ -351,53 +329,63 @@ async def extract_shopee_driver_profile() -> Path:
                         # Encontrar a tarefa MAIS RECENTE (maior horário)
                         tarefa_mais_recente = max(tarefas_info, key=lambda x: x['horario'])
                         logger.info(f"✅ Tarefa mais recente: {tarefa_mais_recente['horario']}")
-                        
-                        # Verificar se o horário é posterior ao início da exportação
+
+                        # Verificar se o horário é POSTERIOR ao início da exportação
                         horario_tarefa = tarefa_mais_recente['horario']
+                        tarefa_valida = True
                         if horario_tarefa != 'desconhecido':
                             from datetime import datetime as dt
                             try:
                                 hora_tarefa_dt = dt.strptime(horario_tarefa, '%Y-%m-%d %H:%M:%S')
                                 if hora_tarefa_dt >= hora_antes_export:
-                                    logger.info(f"✅ Tarefa é posterior à exportação! Baixando...")
+                                    logger.info(f"✅ Tarefa {horario_tarefa} é posterior à exportação — baixando!")
                                 else:
-                                    logger.warning(f"⚠️ Tarefa é ANTERIOR à exportação! Pode ser arquivo antigo.")
-                            except:
-                                logger.warning(f"⚠️ Não conseguiu comparar horários")
-                        
-                        # Clicar no botão "Baixar" da tarefa mais recente via JavaScript
-                        async with page.expect_download(timeout=60_000) as download_info:
-                            click_result = await page.evaluate("""
-                                () => {
-                                    const tarefas = [];
-                                    document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
-                                        const text = el.textContent || '';
-                                        if (text.includes('Spx Driver') || text.includes('spx_driver')) {
-                                            const buttons = el.querySelectorAll('button');
-                                            buttons.forEach(btn => {
-                                                if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
-                                                    btn.click();
-                                                    tarefas.push({ success: true });
-                                                }
-                                            });
-                                        }
-                                    });
-                                    return tarefas.length > 0 ? tarefas[0] : { success: false };
-                                }
-                            """)
-                        
-                        if click_result.get('success'):
-                            logger.info("✅ Botão 'Baixar' clicado!")
-                            download = await download_info.value
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
-                            await download.save_as(str(caminho_arquivo))
-                            logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
-                            logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
-                            encontrado = True
-                            break
+                                    logger.warning(
+                                        f"⚠️ Tarefa {horario_tarefa} é ANTERIOR à exportação "
+                                        f"({hora_antes_export.strftime('%Y-%m-%d %H:%M:%S')}). "
+                                        f"Aguardando nova tarefa..."
+                                    )
+                                    tarefa_valida = False
+                            except Exception:
+                                logger.warning("⚠️ Não conseguiu comparar horários — prosseguindo")
+
+                        if not tarefa_valida:
+                            # Pula download desta iteração; loop reabre painel e tenta novamente
+                            pass
                         else:
-                            logger.warning("⚠️ Encontrou tarefa mas não conseguiu clicar")
+                            # Clicar no botão "Baixar" da tarefa mais recente via JavaScript
+                            async with page.expect_download(timeout=60_000) as download_info:
+                                click_result = await page.evaluate("""
+                                    () => {
+                                        const tarefas = [];
+                                        document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
+                                            const text = el.textContent || '';
+                                            if (text.includes('Spx Driver') || text.includes('spx_driver')) {
+                                                const buttons = el.querySelectorAll('button');
+                                                buttons.forEach(btn => {
+                                                    if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
+                                                        btn.click();
+                                                        tarefas.push({ success: true });
+                                                    }
+                                                });
+                                            }
+                                        });
+                                        return tarefas.length > 0 ? tarefas[0] : { success: false };
+                                    }
+                                """)
+
+                            if click_result.get('success'):
+                                logger.info("✅ Botão 'Baixar' clicado!")
+                                download = await download_info.value
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
+                                await download.save_as(str(caminho_arquivo))
+                                logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+                                logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
+                                encontrado = True
+                                break
+                            else:
+                                logger.warning("⚠️ Encontrou tarefa mas não conseguiu clicar")
                     else:
                         logger.warning("⚠️ Nenhuma tarefa Spx Driver encontrada")
 
