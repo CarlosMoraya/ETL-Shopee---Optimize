@@ -13,6 +13,7 @@ Fluxo:
 """
 import asyncio
 import os
+import tempfile
 import zipfile
 from pathlib import Path
 from datetime import datetime
@@ -27,23 +28,27 @@ PORTAL_URL = "https://logistics.myagencyservice.com.br/"
 
 
 def _ler_arquivo(caminho: Path, nrows=None):
-    """Lê CSV, Excel ou ZIP (extraindo o primeiro CSV/Excel interno)."""
+    """Lê CSV, Excel ou ZIP (extraindo o primeiro CSV/Excel para disco antes de ler)."""
     import pandas as pd
 
     sufixo = caminho.suffix.lower()
     if sufixo == ".zip":
         with zipfile.ZipFile(caminho) as zf:
             nomes = zf.namelist()
+            logger.info(f"Conteúdo do ZIP: {nomes}")
             # Prioriza CSV; se não houver, pega o primeiro Excel
             alvo = next((n for n in nomes if n.lower().endswith(".csv")), None) or \
                    next((n for n in nomes if n.lower().endswith((".xlsx", ".xls"))), None)
             if alvo is None:
                 raise Exception(f"ZIP não contém CSV nem Excel. Arquivos: {nomes}")
-            logger.info(f"Extraindo '{alvo}' do ZIP...")
-            with zf.open(alvo) as f:
-                if alvo.lower().endswith(".csv"):
-                    return pd.read_csv(f, nrows=nrows)
-                return pd.read_excel(f, nrows=nrows)
+            logger.info(f"Extraindo '{alvo}' do ZIP para disco...")
+            # Extrai para arquivo temporário em disco — pd.read_excel falha com ZipExtFile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zf.extract(alvo, tmpdir)
+                extraido = Path(tmpdir) / alvo
+                if extraido.suffix.lower() == ".csv":
+                    return pd.read_csv(extraido, nrows=nrows)
+                return pd.read_excel(extraido, nrows=nrows)
     if sufixo == ".csv":
         return pd.read_csv(caminho, nrows=nrows)
     return pd.read_excel(caminho, nrows=nrows)
