@@ -124,22 +124,33 @@ async def extract_shopee_driver_profile() -> Path:
             hora_antes_export = datetime.now()
             logger.info(f"🕐 Horário antes de clicar em Exportar: {hora_antes_export.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            # O Vue precisa de tempo para renderizar o conteúdo do dropdown
-            # Vamos usar JavaScript com espera adequada
+            # O Vue NÃO renderiza o dropdown em headless - está sempre vazio (<!---->)
+            # Estratégia: Usar keyboard navigation que funciona SEMPRE
             export_sucesso = False
             
-            for tentativa_export in range(3):
+            # Estratégia 1: ArrowDown + Enter (mais confiável em headless)
+            try:
+                logger.info("Tentativa 1: Keyboard navigation (ArrowDown + Enter)...")
+                await page.wait_for_timeout(1_000)
+                await page.keyboard.press("ArrowDown")
+                await page.wait_for_timeout(500)
+                await page.keyboard.press("Enter")
+                logger.info("✅ Exportação solicitada via teclado!")
+                export_sucesso = True
+            except Exception as e:
+                logger.warning(f"Teclado falhou: {e}")
+
+            # Estratégia 2: Click via coordenadas do primeiro item do dropdown
+            if not export_sucesso:
                 try:
-                    logger.info(f"Tentativa {tentativa_export + 1} de clicar em 'Exportar'...")
+                    logger.info("Tentativa 2: Click via coordenadas do primeiro item...")
+                    await page.wait_for_timeout(2_000)
                     
-                    # Aguardar Vue renderizar o dropdown
-                    await page.wait_for_timeout(3_000)
-                    
-                    # Forçar dropdown visível e clicar via JavaScript
-                    click_result = await page.evaluate("""
-                        async () => {
+                    # Obter coordenadas do dropdown e clicar no primeiro item
+                    coords = await page.evaluate("""
+                        () => {
                             const popover = document.querySelector('.popover.ssc-tooltip-popover.searcher-with-history-dropdown');
-                            if (!popover) return { success: false, error: 'Popover não encontrado' };
+                            if (!popover) return null;
                             
                             // Forçar visibilidade
                             popover.style.display = 'block';
@@ -148,72 +159,61 @@ async def extract_shopee_driver_profile() -> Path:
                             popover.style.zIndex = '99999';
                             popover.style.pointerEvents = 'auto';
                             
-                            // Aguardar Vue renderizar conteúdo
-                            await new Promise(resolve => setTimeout(resolve, 3000));
-                            
-                            // Buscar TODOS os elementos e seus textos
-                            const allElements = Array.from(popover.querySelectorAll('*'));
-                            console.log('Elementos encontrados:', allElements.length);
-                            
-                            // Procurar por "Exportar" exato (não "Histórico")
-                            for (let el of allElements) {
-                                const text = el.textContent.trim();
-                                if (text === 'Exportar') {
-                                    console.log('Encontrou Exportar exato em:', el.tagName, el.className);
-                                    // Verificar se é visível
-                                    const rect = el.getBoundingClientRect();
-                                    if (rect.width > 0 && rect.height > 0) {
-                                        el.click();
-                                        return { success: true, clicked: 'Exportar exato', tag: el.tagName };
-                                    }
-                                }
-                            }
-                            
-                            // Procurar por "Exportar" que não contém "Histórico"
-                            for (let el of allElements) {
-                                const text = el.textContent.trim();
-                                if (text.includes('Exportar') && !text.includes('Histórico') && !text.includes('Exportação') && text.length < 20) {
-                                    const rect = el.getBoundingClientRect();
-                                    if (rect.width > 0 && rect.height > 0) {
-                                        el.click();
-                                        return { success: true, clicked: text, tag: el.tagName };
-                                    }
-                                }
-                            }
-                            
-                            // Último recurso: clicar no primeiro elemento clicável do popover
-                            const clickableElements = popover.querySelectorAll('li, [role="menuitem"], button, [class*="item"]');
-                            if (clickableElements.length > 0) {
-                                clickableElements[0].click();
-                                return { success: true, clicked: 'primeiro elemento', tag: clickableElements[0].tagName };
-                            }
-                            
-                            return { success: false, error: 'Item não encontrado', html: popover.innerHTML.substring(0, 1000) };
+                            const rect = popover.getBoundingClientRect();
+                            // Calcular posição do primeiro item (aproximadamente 40px abaixo do topo)
+                            return {
+                                x: rect.left + rect.width / 2,
+                                y: rect.top + 40,  // Primeiro item está ~40px abaixo
+                                width: rect.width,
+                                height: rect.height
+                            };
                         }
                     """)
                     
-                    logger.info(f"Resultado: {click_result}")
-                    
-                    if click_result.get('success'):
-                        logger.info(f"✅ Exportação solicitada via JavaScript! Clicou em: {click_result.get('clicked')}")
+                    if coords:
+                        logger.info(f"Clicando nas coordenadas: ({coords['x']}, {coords['y']})")
+                        await page.mouse.click(coords['x'], coords['y'])
+                        logger.info("✅ Click via coordenadas realizado!")
                         export_sucesso = True
-                        break
                     else:
-                        logger.warning(f"⚠️ Tentativa {tentativa_export + 1} falhou: {click_result.get('error')}")
-                        # Fechar e reabrir dropdown
-                        await page.keyboard.press("Escape")
-                        await page.wait_for_timeout(1_000)
-                        botao_exportar = page.locator('button:has-text("Exportar")').first
-                        await botao_exportar.click()
-                        await page.wait_for_timeout(2_000)
+                        logger.warning("Não conseguiu obter coordenadas")
                         
                 except Exception as e:
-                    logger.warning(f"Tentativa {tentativa_export + 1} erro: {e}")
+                    logger.warning(f"Coordenadas falharam: {e}")
+
+            # Estratégia 3: Usar a página "Histórico de exportação" para acionar exportação
+            if not export_sucesso:
+                try:
+                    logger.info("Tentativa 3: Navegar para 'Histórico de exportação' e acionar...")
+                    # Fechar dropdown atual
                     await page.keyboard.press("Escape")
                     await page.wait_for_timeout(1_000)
+                    
+                    # Abrir dropdown novamente
+                    botao_exportar = page.locator('button:has-text("Exportar")').first
+                    await botao_exportar.click()
+                    await page.wait_for_timeout(1_000)
+                    
+                    # ArrowDown DUAS vezes para ir para "Histórico de exportação"
+                    await page.keyboard.press("ArrowDown")
+                    await page.wait_for_timeout(300)
+                    await page.keyboard.press("ArrowDown")
+                    await page.wait_for_timeout(300)
+                    await page.keyboard.press("Enter")
+                    await page.wait_for_timeout(2_000)
+                    
+                    # Agora estamos na página de histórico - acionar exportação de lá
+                    # Clicar em botão de exportar na página de histórico
+                    export_btn = page.locator('button:has-text("Exportar"), button:has-text("Export")').first
+                    await export_btn.wait_for(timeout=10_000)
+                    await export_btn.click()
+                    logger.info("✅ Exportação acionada via Histórico!")
+                    export_sucesso = True
+                except Exception as e:
+                    logger.warning(f"Histórico falhou: {e}")
 
             if not export_sucesso:
-                logger.error("❌ Não conseguiu clicar em Exportar após 3 tentativas!")
+                logger.error("❌ Todas as estratégias falharam!")
                 await page.screenshot(path=str(output_path / "erro_exportar.png"))
                 raise Exception("Falha ao clicar em Exportar no dropdown")
 
