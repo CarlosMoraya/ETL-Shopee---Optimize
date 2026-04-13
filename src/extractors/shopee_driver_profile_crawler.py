@@ -120,31 +120,24 @@ async def extract_shopee_driver_profile() -> Path:
             # 5. CLICAR NA OPÇÃO 1 "EXPORTAR" DO DROPDOWN (NÃO "Histórico de exportações")
             logger.info("Clicando na opção 'Exportar' do dropdown (opção 1)...")
             
-            # O HTML do popover mostra que está VAZIO (<!----> são placeholders Vue não renderizados)
-            # O Vue ainda não montou o conteúdo. Usaremos navegação por teclado que é mais confiável.
+            # Registrar horário ANTES de clicar para verificar depois
+            hora_antes_export = datetime.now()
+            logger.info(f"🕐 Horário antes de clicar em Exportar: {hora_antes_export.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            # O Vue precisa de tempo para renderizar o conteúdo do dropdown
+            # Vamos usar JavaScript com espera adequada
+            export_sucesso = False
             
-            try:
-                # Estratégia 1: Navegação por teclado (mais confiável)
-                logger.info("Tentando navegação por teclado (Down + Enter)...")
-                await page.wait_for_timeout(1_000)  # Aguardar Vue renderizar
-                await page.keyboard.press("ArrowDown")  # Selecionar primeira opção ("Exportar")
-                await page.wait_for_timeout(300)
-                await page.keyboard.press("Enter")  # Clicar na opção selecionada
-                logger.info("✅ Exportação solicitada via teclado!")
-            except Exception as e:
-                logger.warning(f"Teclado falhou: {e}")
-                
-                # Estratégia 2: Aguardar conteúdo Vue carregar e clicar via JS
+            for tentativa_export in range(3):
                 try:
-                    logger.info("Aguardando conteúdo Vue carregar...")
+                    logger.info(f"Tentativa {tentativa_export + 1} de clicar em 'Exportar'...")
+                    
+                    # Aguardar Vue renderizar o dropdown
                     await page.wait_for_timeout(3_000)
                     
-                    # Tentar encontrar e clicar no item "Exportar" após aguardar
+                    # Forçar dropdown visível e clicar via JavaScript
                     click_result = await page.evaluate("""
                         async () => {
-                            // Aguardar mais um pouco
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            
                             const popover = document.querySelector('.popover.ssc-tooltip-popover.searcher-with-history-dropdown');
                             if (!popover) return { success: false, error: 'Popover não encontrado' };
                             
@@ -152,47 +145,85 @@ async def extract_shopee_driver_profile() -> Path:
                             popover.style.display = 'block';
                             popover.style.visibility = 'visible';
                             popover.style.opacity = '1';
-                            popover.style.zIndex = '9999';
+                            popover.style.zIndex = '99999';
+                            popover.style.pointerEvents = 'auto';
                             
-                            // Aguardar conteúdo carregar
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            // Aguardar Vue renderizar conteúdo
+                            await new Promise(resolve => setTimeout(resolve, 3000));
                             
-                            // Procurar em TODOS os elementos filhos
-                            const allElements = popover.querySelectorAll('*');
+                            // Buscar TODOS os elementos e seus textos
+                            const allElements = Array.from(popover.querySelectorAll('*'));
+                            console.log('Elementos encontrados:', allElements.length);
+                            
+                            // Procurar por "Exportar" exato (não "Histórico")
                             for (let el of allElements) {
                                 const text = el.textContent.trim();
-                                if (text && text === 'Exportar') {
-                                    el.click();
-                                    return { success: true, clicked: text, tag: el.tagName };
+                                if (text === 'Exportar') {
+                                    console.log('Encontrou Exportar exato em:', el.tagName, el.className);
+                                    // Verificar se é visível
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.width > 0 && rect.height > 0) {
+                                        el.click();
+                                        return { success: true, clicked: 'Exportar exato', tag: el.tagName };
+                                    }
                                 }
                             }
                             
-                            // Se não encontrou "Exportar" exato, tentar com partial match
+                            // Procurar por "Exportar" que não contém "Histórico"
                             for (let el of allElements) {
                                 const text = el.textContent.trim();
-                                if (text && text.includes('Exportar') && !text.includes('Histórico') && !text.includes('Exportação')) {
-                                    el.click();
-                                    return { success: true, clicked: text, tag: el.tagName };
+                                if (text.includes('Exportar') && !text.includes('Histórico') && !text.includes('Exportação') && text.length < 20) {
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.width > 0 && rect.height > 0) {
+                                        el.click();
+                                        return { success: true, clicked: text, tag: el.tagName };
+                                    }
                                 }
                             }
                             
-                            return { success: false, error: 'Item não encontrado', html: popover.innerHTML.substring(0, 800) };
+                            // Último recurso: clicar no primeiro elemento clicável do popover
+                            const clickableElements = popover.querySelectorAll('li, [role="menuitem"], button, [class*="item"]');
+                            if (clickableElements.length > 0) {
+                                clickableElements[0].click();
+                                return { success: true, clicked: 'primeiro elemento', tag: clickableElements[0].tagName };
+                            }
+                            
+                            return { success: false, error: 'Item não encontrado', html: popover.innerHTML.substring(0, 1000) };
                         }
                     """)
                     
                     logger.info(f"Resultado: {click_result}")
+                    
                     if click_result.get('success'):
-                        logger.info("✅ Exportação solicitada via JavaScript!")
+                        logger.info(f"✅ Exportação solicitada via JavaScript! Clicou em: {click_result.get('clicked')}")
+                        export_sucesso = True
+                        break
                     else:
-                        raise Exception(f"Não encontrou item: {click_result}")
+                        logger.warning(f"⚠️ Tentativa {tentativa_export + 1} falhou: {click_result.get('error')}")
+                        # Fechar e reabrir dropdown
+                        await page.keyboard.press("Escape")
+                        await page.wait_for_timeout(1_000)
+                        botao_exportar = page.locator('button:has-text("Exportar")').first
+                        await botao_exportar.click()
+                        await page.wait_for_timeout(2_000)
                         
-                except Exception as e2:
-                    logger.error(f"Todas as estratégias falharam: {e2}")
-                    await page.screenshot(path=str(output_path / "erro_dropdown.png"))
-                    raise
+                except Exception as e:
+                    logger.warning(f"Tentativa {tentativa_export + 1} erro: {e}")
+                    await page.keyboard.press("Escape")
+                    await page.wait_for_timeout(1_000)
 
-            logger.info("Exportação solicitada — aguardando 90s para processamento do servidor...")
+            if not export_sucesso:
+                logger.error("❌ Não conseguiu clicar em Exportar após 3 tentativas!")
+                await page.screenshot(path=str(output_path / "erro_exportar.png"))
+                raise Exception("Falha ao clicar em Exportar no dropdown")
+
+            # Aguardar processamento da exportação
+            logger.info(f"⏳ Exportação iniciada às {hora_antes_export.strftime('%H:%M:%S')}")
+            logger.info("Aguardando 90s para processamento do servidor...")
             await page.wait_for_timeout(90_000)
+            
+            hora_depois_export = datetime.now()
+            logger.info(f"✅ Processamento concluído às {hora_depois_export.strftime('%H:%M:%S')}")
             await page.screenshot(path=str(output_path / "apos_exportar.png"))
 
             # 6. ABRIR PAINEL "ÚLTIMA TAREFA" via ícone de tarefas no header
@@ -217,8 +248,9 @@ async def extract_shopee_driver_profile() -> Path:
                 await page.screenshot(path=str(output_path / "erro_painel.png"))
                 raise Exception("Não foi possível abrir o painel 'Última tarefa'.")
 
-            # 7. ENCONTRAR E CLICAR NO BOTÃO "BAIXAR" DA TAREFA "Spx Driver"
-            logger.info("Procurando tarefa 'Spx Driver' no painel...")
+            # 7. ENCONTRAR E CLICAR NO BOTÃO "BAIXAR" DA TAREFA "Spx Driver" MAIS RECENTE
+            logger.info("Procurando tarefa 'Spx Driver' mais recente no painel...")
+            logger.info(f"🕐 Exportação foi iniciada às: {hora_antes_export.strftime('%Y-%m-%d %H:%M:%S')}")
             caminho_arquivo = None
             encontrado = False
 
@@ -227,49 +259,93 @@ async def extract_shopee_driver_profile() -> Path:
 
             for tentativa_baixar in range(6):
                 try:
-                    # Estratégia 1: Procurar pela tarefa específica "Spx Driver"
-                    logger.info(f"Tentativa {tentativa_baixar + 1}: Procurando por 'Spx Driver'...")
+                    # Estratégia 1: Procurar pela tarefa "Spx Driver" mais recente (pelo horário)
+                    logger.info(f"Tentativa {tentativa_baixar + 1}: Procurando por 'Spx Driver' mais recente...")
 
-                    # Configurar listener de download ANTES de clicar
-                    async with page.expect_download(timeout=60_000) as download_info:
-                        # Usar JavaScript para encontrar e clicar na tarefa correta
-                        click_result = await page.evaluate("""
-                            () => {
-                                const results = [];
-                                document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
-                                    const text = el.textContent || '';
-                                    if (text.includes('Spx Driver') || text.includes('spx_driver')) {
-                                        const buttons = el.querySelectorAll('button');
-                                        buttons.forEach(btn => {
-                                            if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
-                                                btn.click();
-                                                results.push({ 
-                                                    success: true, 
-                                                    taskText: text.substring(0, 100) 
-                                                });
-                                            }
-                                        });
-                                    }
-                                });
-                                return results.length > 0 ? results[0] : { success: false, error: 'Spx Driver não encontrado' };
-                            }
-                        """)
+                    # Usar JavaScript para encontrar TODAS as tarefas Spx Driver e seus horários
+                    tarefas_info = await page.evaluate("""
+                        () => {
+                            const tarefas = [];
+                            document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
+                                const text = el.textContent || '';
+                                if (text.includes('Spx Driver') || text.includes('spx_driver')) {
+                                    // Extrair horário do texto (formato: YYYY-MM-DD HH:MM:SS)
+                                    const timeMatch = text.match(/\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}/);
+                                    const horario = timeMatch ? timeMatch[0] : 'desconhecido';
+                                    
+                                    const buttons = el.querySelectorAll('button');
+                                    buttons.forEach(btn => {
+                                        if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
+                                            tarefas.push({
+                                                text: text.substring(0, 200),
+                                                horario: horario,
+                                                buttonIndex: Array.from(el.querySelectorAll('button')).indexOf(btn)
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+                            return tarefas;
+                        }
+                    """)
                     
-                    # Agora temos o download_info do expect_download
-                    if click_result.get('success'):
-                        logger.info(f"✅ Tarefa 'Spx Driver' encontrada e botão clicado: {click_result.get('taskText')}")
-                        encontrado = True
+                    logger.info(f"📋 Tarefas Spx Driver encontradas: {len(tarefas_info)}")
+                    for i, tarefa in enumerate(tarefas_info):
+                        logger.info(f"   {i+1}. Horário: {tarefa['horario']} - {tarefa['text'][:100]}")
+
+                    if len(tarefas_info) > 0:
+                        # Encontrar a tarefa MAIS RECENTE (maior horário)
+                        tarefa_mais_recente = max(tarefas_info, key=lambda x: x['horario'])
+                        logger.info(f"✅ Tarefa mais recente: {tarefa_mais_recente['horario']}")
                         
-                        # Aguardar o download completar
-                        download = await download_info.value
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
-                        await download.save_as(str(caminho_arquivo))
-                        logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
-                        logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
-                        break
+                        # Verificar se o horário é posterior ao início da exportação
+                        horario_tarefa = tarefa_mais_recente['horario']
+                        if horario_tarefa != 'desconhecido':
+                            from datetime import datetime as dt
+                            try:
+                                hora_tarefa_dt = dt.strptime(horario_tarefa, '%Y-%m-%d %H:%M:%S')
+                                if hora_tarefa_dt >= hora_antes_export:
+                                    logger.info(f"✅ Tarefa é posterior à exportação! Baixando...")
+                                else:
+                                    logger.warning(f"⚠️ Tarefa é ANTERIOR à exportação! Pode ser arquivo antigo.")
+                            except:
+                                logger.warning(f"⚠️ Não conseguiu comparar horários")
+                        
+                        # Clicar no botão "Baixar" da tarefa mais recente via JavaScript
+                        async with page.expect_download(timeout=60_000) as download_info:
+                            click_result = await page.evaluate("""
+                                () => {
+                                    const tarefas = [];
+                                    document.querySelectorAll('.el-scrollbar__view > div, [class*="task"], [class*="item"]').forEach(el => {
+                                        const text = el.textContent || '';
+                                        if (text.includes('Spx Driver') || text.includes('spx_driver')) {
+                                            const buttons = el.querySelectorAll('button');
+                                            buttons.forEach(btn => {
+                                                if (btn.textContent.includes('Baixar') || btn.textContent.includes('Download')) {
+                                                    btn.click();
+                                                    tarefas.push({ success: true });
+                                                }
+                                            });
+                                        }
+                                    });
+                                    return tarefas.length > 0 ? tarefas[0] : { success: false };
+                                }
+                            """)
+                        
+                        if click_result.get('success'):
+                            logger.info("✅ Botão 'Baixar' clicado!")
+                            download = await download_info.value
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            caminho_arquivo = output_path / f"shopee_driver_profile_{timestamp}_{download.suggested_filename}"
+                            await download.save_as(str(caminho_arquivo))
+                            logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+                            logger.info(f"Nome do arquivo sugerido: {download.suggested_filename}")
+                            encontrado = True
+                            break
+                        else:
+                            logger.warning("⚠️ Encontrou tarefa mas não conseguiu clicar")
                     else:
-                        logger.warning(f"⚠️ {click_result.get('error')}")
+                        logger.warning("⚠️ Nenhuma tarefa Spx Driver encontrada")
 
                     # Estratégia 2: Se não encontrou, reabrir o painel para atualizar
                     logger.info(f"Reabrindo painel para atualizar...")
