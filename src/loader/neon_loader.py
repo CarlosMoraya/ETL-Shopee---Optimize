@@ -63,35 +63,49 @@ def load_to_neon(
     engine = create_neon_engine()
     
     try:
-        # Criar tabela se não existir
+        with engine.connect() as conn:
+            result = conn.execute(text(f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = '{schema}'
+                    AND table_name = '{table_name}'
+                );
+            """))
+            tabela_existe = result.scalar()
+
         if if_exists == "append":
-            # Verificar se tabela existe
+            if not tabela_existe:
+                logger.info(f"Tabela {schema}.{table_name} não existe. Criando...")
+                if_exists = "replace"
+            else:
+                logger.info(f"Tabela {schema}.{table_name} já existe. Append mode.")
+
+        # Quando replace e tabela já existe: TRUNCATE + INSERT para preservar views dependentes
+        if if_exists == "replace" and tabela_existe:
+            logger.info(f"Tabela {schema}.{table_name} já existe. Usando TRUNCATE + INSERT para preservar objetos dependentes.")
             with engine.connect() as conn:
-                result = conn.execute(text(f"""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_schema = '{schema}' 
-                        AND table_name = '{table_name}'
-                    );
-                """))
-                tabela_existe = result.scalar()
-                
-                if not tabela_existe:
-                    logger.info(f"Tabela {schema}.{table_name} não existe. Criando...")
-                    if_exists = "replace"
-                else:
-                    logger.info(f"Tabela {schema}.{table_name} já existe. Append mode.")
-        
-        # Carregar dados
-        rows_inserted = df.to_sql(
-            name=table_name,
-            con=engine,
-            schema=schema,
-            if_exists=if_exists,
-            index=False,
-            chunksize=chunksize,
-            method="multi",
-        )
+                conn.execute(text(f"TRUNCATE TABLE {schema}.{table_name}"))
+                conn.commit()
+            rows_inserted = df.to_sql(
+                name=table_name,
+                con=engine,
+                schema=schema,
+                if_exists="append",
+                index=False,
+                chunksize=chunksize,
+                method="multi",
+            )
+        else:
+            # Carregar dados (tabela não existe — cria normalmente)
+            rows_inserted = df.to_sql(
+                name=table_name,
+                con=engine,
+                schema=schema,
+                if_exists=if_exists,
+                index=False,
+                chunksize=chunksize,
+                method="multi",
+            )
         
         logger.info(f"✅ Carga concluída! {rows_inserted} linhas inseridas.")
         return rows_inserted
