@@ -7,7 +7,7 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-from src.utils import get_logger, DATA_PROCESSED_DIR
+from src.utils import get_logger
 from src.extractors.shopee_monitoramento_crawler import extract_shopee_monitoramento
 from src.loader.neon_loader import load_to_neon
 
@@ -26,7 +26,7 @@ def carregar_e_validar(arquivo_csv: Path) -> pd.DataFrame:
     """
     logger.info(f"Carregando CSV: {arquivo_csv}")
     
-    df = pd.read_csv(arquivo_csv)
+    df = pd.read_csv(arquivo_csv, dtype={"driver_id": "Int64"})
     
     logger.info(f"Linhas carregadas: {len(df)}")
     logger.info(f"Colunas: {list(df.columns)}")

@@ -86,12 +86,11 @@ async def extract_shopee_monitoramento() -> Path:
             logger.info("Clicando na aba 'Visão geral dos motoristas'...")
             try:
                 aba = page.locator('span:has-text("Visão geral dos motoristas")')
-                await aba.wait_for(timeout=20_000)
+                await aba.wait_for(timeout=5_000)
                 await aba.click()
                 logger.info("Aba clicada!")
-            except Exception as e:
-                logger.warning(f"Aba não encontrada ou já ativa: {e}")
-                await page.screenshot(path=str(output_path / "erro_dashboard.png"))
+            except Exception:
+                logger.info("Aba já ativa ou não encontrada — prosseguindo.")
 
             await page.wait_for_timeout(5_000)
 
@@ -117,10 +116,8 @@ async def extract_shopee_monitoramento() -> Path:
     df = pd.read_excel(caminho_arquivo)
 
     extracao = df["Driver Name"].str.extract(r"\[(.*?)\]\s*(.*)")
-    df.insert(0, "driver_id", extracao[0])
-    df["Driver Name"] = extracao[1]
-    df["driver_id"] = df["driver_id"].fillna("")
-    df["Driver Name"] = df["Driver Name"].fillna("")
+    df.insert(0, "driver_id", pd.to_numeric(extracao[0], errors="coerce").astype("Int64"))
+    df["Driver Name"] = extracao[1].fillna("")
 
     df.columns = (
         df.columns
