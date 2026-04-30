@@ -136,6 +136,11 @@ async def extract_shopee_monitoramento() -> Path:
     if "expected_delivered_percentage_perc" in df.columns:
         df = df.rename(columns={"expected_delivered_percentage_perc": "expected_delivered_percentage"})
 
+    # Converter "-" para None nas colunas de tempo para evitar erro de tipo no PostgreSQL
+    for col in ["assigned_time", "time_since_last_delivery"]:
+        if col in df.columns:
+            df[col] = df[col].replace("-", None)
+
     df["extracted_at"] = datetime.now()
 
     # Adicionar a nova coluna 'embarcador' na primeira posição
