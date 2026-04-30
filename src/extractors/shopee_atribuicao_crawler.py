@@ -162,8 +162,25 @@ async def extract_shopee_atribuicao() -> Path:
 
             # 2. NAVEGAR PARA ATRIBUIÇÃO DE ENTREGA
             logger.info(f"Navegando para: {ATRIBUICAO_URL}")
-            await page.goto(ATRIBUICAO_URL, wait_until="domcontentloaded", timeout=60_000)
-            await page.wait_for_timeout(10_000)
+            await page.goto(ATRIBUICAO_URL, wait_until="networkidle", timeout=60_000)
+            await page.wait_for_timeout(5_000)
+
+            # Verificar se o conteúdo React carregou; se não, recarregar uma vez
+            pagina_ok = False
+            for tentativa_nav in range(2):
+                try:
+                    await page.locator('table, form, .ssc-react-pro-form').first.wait_for(timeout=20_000)
+                    pagina_ok = True
+                    break
+                except Exception:
+                    logger.warning(f"Página não renderizou (tentativa {tentativa_nav + 1}/2) — recarregando...")
+                    await page.reload(wait_until="networkidle", timeout=60_000)
+                    await page.wait_for_timeout(5_000)
+
+            if not pagina_ok:
+                await page.screenshot(path=str(output_path / "erro_pagina_atribuicao.png"))
+                raise Exception("Página de Atribuição não carregou após 2 tentativas.")
+
             await page.screenshot(path=str(output_path / "pagina_atribuicao.png"))
 
             # 2.1. Clicar na Aba 'Todos'
