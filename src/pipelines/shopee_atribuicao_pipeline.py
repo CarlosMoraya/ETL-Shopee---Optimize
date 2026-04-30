@@ -35,21 +35,15 @@ def _partial_load(df: pd.DataFrame, table_name: str, schema: str = "public") -> 
         logger.warning(f"Colunas de chave não encontradas — usando replace completo.")
         return load_to_neon(df, table_name, schema, if_exists="replace")
 
-    # Deletar apenas as combinações exatas (tracking + AT) que serão reinseridas
-    pares = (
-        df[[TRACKING_COL, AT_COL]]
-        .dropna(subset=[TRACKING_COL, AT_COL])
-        .drop_duplicates()
-    )
-    if not pares.empty:
-        values = ", ".join(
-            [f"('{row[TRACKING_COL]}', '{row[AT_COL]}')" for _, row in pares.iterrows()]
-        )
+    # Deletar por assignment_task_id — lista muito menor que pares (tracking, AT),
+    # preserva ATs antigas com mesmo tracking e evita queries excessivamente grandes.
+    at_vals = df[AT_COL].dropna().unique().tolist()
+    if at_vals:
+        placeholders = ", ".join([f"'{v}'" for v in at_vals])
         execute_query(
-            f"DELETE FROM {schema}.{table_name} "
-            f"WHERE ({TRACKING_COL}, {AT_COL}) IN ({values})"
+            f"DELETE FROM {schema}.{table_name} WHERE {AT_COL} IN ({placeholders})"
         )
-        logger.info(f"Deletadas {len(pares)} combinações (tracking, AT) existentes.")
+        logger.info(f"Deletadas linhas de {len(at_vals)} ATs existentes.")
 
     rows_inserted = load_to_neon(df, table_name, schema, if_exists="append")
     logger.info(f"✅ Carga incremental concluída: {rows_inserted} linhas inseridas.")
@@ -96,7 +90,7 @@ async def run_pipeline(table_name: str = TABLE_NAME):
         logger.info("✅ PIPELINE CONCLUÍDO COM SUCESSO!")
         logger.info(f"   - Tabela: {table_name} | Linhas inseridas: {rows_inserted_completo}")
         logger.info(f"   - Tabela: {table_name_uniq} | Linhas inseridas: {rows_inserted_uniq}")
-        logger.info(f"   - Modo: incremental (delete+insert por {TRACKING_COL} + {AT_COL})")
+        logger.info(f"   - Modo: incremental (delete+insert por {AT_COL})")
         logger.info("=" * 80)
 
         return {
@@ -104,7 +98,7 @@ async def run_pipeline(table_name: str = TABLE_NAME):
             "inserted_rows_completo": rows_inserted_completo,
             "inserted_rows_uniq": rows_inserted_uniq,
             "tables": [table_name, table_name_uniq],
-            "mode": f"incremental ({TRACKING_COL} + {AT_COL})",
+            "mode": f"incremental (delete+insert por {AT_COL})",
         }
 
     except Exception as e:
