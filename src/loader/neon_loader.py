@@ -83,6 +83,24 @@ def load_to_neon(
         # Quando replace e tabela já existe: TRUNCATE + INSERT para preservar views dependentes
         if if_exists == "replace" and tabela_existe:
             logger.info(f"Tabela {schema}.{table_name} já existe. Usando TRUNCATE + INSERT para preservar objetos dependentes.")
+
+            # Adicionar colunas novas que existem no DataFrame mas não na tabela
+            with engine.connect() as conn:
+                result = conn.execute(text(f"""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = '{schema}' AND table_name = '{table_name}'
+                """))
+                colunas_existentes = {row[0] for row in result.fetchall()}
+
+            colunas_novas = [col for col in df.columns if col not in colunas_existentes]
+            if colunas_novas:
+                logger.info(f"Adicionando colunas novas à tabela: {colunas_novas}")
+                with engine.connect() as conn:
+                    for col in colunas_novas:
+                        conn.execute(text(f'ALTER TABLE {schema}.{table_name} ADD COLUMN IF NOT EXISTS "{col}" TEXT'))
+                    conn.commit()
+
             with engine.connect() as conn:
                 conn.execute(text(f"TRUNCATE TABLE {schema}.{table_name}"))
                 conn.commit()
