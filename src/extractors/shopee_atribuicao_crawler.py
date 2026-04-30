@@ -16,7 +16,7 @@ Fluxo baseado no passo a passo manual funcional:
 import asyncio
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 
 from playwright.async_api import async_playwright
@@ -202,18 +202,53 @@ async def extract_shopee_atribuicao() -> Path:
                 except Exception as e:
                     logger.warning(f"Aviso ao tentar fallback da aba Todos: {e}")
 
-            # 2.2. Limpar Filtros de Data (se houver, para garantir full download)
-            logger.info("Garantindo que os filtros de data estão limpos / selecionado o maior período...")
+            # 2.2. CLICAR EM "MAIS" PARA REVELAR OS FILTROS DE DATA
+            logger.info("Clicando em 'Mais' para revelar filtros de data...")
             try:
-                clear_icons = await page.locator('.ant-picker-clear').all()
-                for icon in clear_icons:
-                    if await icon.is_visible():
-                        await icon.click(force=True)
-                        await page.wait_for_timeout(1_000)
-            except Exception:
-                pass
+                btn_mais = page.locator('button.ssc-react-button-normal:has-text("Mais")').last
+                await btn_mais.wait_for(timeout=10_000)
+                await btn_mais.click(force=True)
+                await page.wait_for_timeout(4_000)
+                logger.info("✅ Botão 'Mais' clicado.")
+            except Exception as e:
+                logger.warning(f"Botão 'Mais' não encontrado: {e}")
 
-            # 2.3. ALTERAR PAGINAÇÃO PARA 100 (máximo) para garantir que mais itens fiquem nativos, se necessário
+            # 2.3. PREENCHER DATAS (últimos 30 dias)
+            logger.info("Preenchendo filtro de data (últimos 30 dias)...")
+            hoje = datetime.now()
+            data_inicio = hoje - timedelta(days=30)
+            str_inicio = data_inicio.strftime("%d/%m/%Y")
+            str_fim = hoje.strftime("%d/%m/%Y")
+            logger.info(f"Intervalo de datas: {str_inicio} até {str_fim}")
+
+            for seletor, valor, rotulo in [
+                ('input[placeholder*="inicio"], input[placeholder*="início"]', str_inicio, "início"),
+                ('input[placeholder*="final"]', str_fim, "fim"),
+            ]:
+                try:
+                    campo = page.locator(seletor).first
+                    await campo.wait_for(timeout=10_000)
+                    await campo.click(click_count=3)
+                    await campo.fill(valor)
+                    await campo.press("Tab")
+                    await page.wait_for_timeout(1_000)
+                    logger.info(f"✅ Data de {rotulo} preenchida: {valor}")
+                except Exception as e:
+                    logger.warning(f"Erro ao preencher data de {rotulo}: {e}")
+
+            # Confirmar o filtro clicando no botão de pesquisa do formulário
+            logger.info("Confirmando filtro de data (clicando em Pesquisar)...")
+            try:
+                btn_pesquisar = page.locator('form button[type="submit"].ssc-react-button-primary').first
+                await btn_pesquisar.wait_for(timeout=5_000)
+                await btn_pesquisar.click(force=True)
+                logger.info("✅ Pesquisa confirmada.")
+            except Exception as e:
+                logger.warning(f"Botão de pesquisa não encontrado: {e}")
+
+            await page.wait_for_timeout(5_000)
+
+            # 2.4. ALTERAR PAGINAÇÃO PARA 100 (máximo) para garantir que mais itens fiquem nativos, se necessário
             logger.info("Configurando paginação para 100 itens por página...")
             try:
                 dropdown_pagina = page.locator('text=/\\d+\\s*\\/\\s*página/').first
