@@ -16,10 +16,11 @@ logger = get_logger(__name__)
 
 TABLE_NAME = "shopee_atribuicao"
 TRACKING_COL = "spx_tracking_num"
+AT_COL = "assignment_task_id"
 
 
 def _partial_load(df: pd.DataFrame, table_name: str, schema: str = "public") -> int:
-    """Deleta linhas com mesmo spx_tracking_num e reinsere os novos dados."""
+    """Deleta linhas com mesma combinação (spx_tracking_num, assignment_task_id) e reinsere."""
     check_rows = execute_query(
         f"SELECT EXISTS (SELECT FROM information_schema.tables "
         f"WHERE table_schema = '{schema}' AND table_name = '{table_name}')"
@@ -30,15 +31,25 @@ def _partial_load(df: pd.DataFrame, table_name: str, schema: str = "public") -> 
         logger.info(f"Tabela {table_name} não existe — criando via replace...")
         return load_to_neon(df, table_name, schema, if_exists="replace")
 
-    if TRACKING_COL not in df.columns:
-        logger.warning(f"Coluna '{TRACKING_COL}' não encontrada — usando replace completo.")
+    if TRACKING_COL not in df.columns or AT_COL not in df.columns:
+        logger.warning(f"Colunas de chave não encontradas — usando replace completo.")
         return load_to_neon(df, table_name, schema, if_exists="replace")
 
-    tracking_vals = df[TRACKING_COL].dropna().unique().tolist()
-    if tracking_vals:
-        placeholders = ", ".join([f"'{v}'" for v in tracking_vals])
-        execute_query(f"DELETE FROM {schema}.{table_name} WHERE {TRACKING_COL} IN ({placeholders})")
-        logger.info(f"Deletadas linhas existentes com {len(tracking_vals)} tracking nums distintos.")
+    # Deletar apenas as combinações exatas (tracking + AT) que serão reinseridas
+    pares = (
+        df[[TRACKING_COL, AT_COL]]
+        .dropna(subset=[TRACKING_COL, AT_COL])
+        .drop_duplicates()
+    )
+    if not pares.empty:
+        values = ", ".join(
+            [f"('{row[TRACKING_COL]}', '{row[AT_COL]}')" for _, row in pares.iterrows()]
+        )
+        execute_query(
+            f"DELETE FROM {schema}.{table_name} "
+            f"WHERE ({TRACKING_COL}, {AT_COL}) IN ({values})"
+        )
+        logger.info(f"Deletadas {len(pares)} combinações (tracking, AT) existentes.")
 
     rows_inserted = load_to_neon(df, table_name, schema, if_exists="append")
     logger.info(f"✅ Carga incremental concluída: {rows_inserted} linhas inseridas.")
@@ -85,7 +96,7 @@ async def run_pipeline(table_name: str = TABLE_NAME):
         logger.info("✅ PIPELINE CONCLUÍDO COM SUCESSO!")
         logger.info(f"   - Tabela: {table_name} | Linhas inseridas: {rows_inserted_completo}")
         logger.info(f"   - Tabela: {table_name_uniq} | Linhas inseridas: {rows_inserted_uniq}")
-        logger.info(f"   - Modo: incremental (delete+insert por {TRACKING_COL})")
+        logger.info(f"   - Modo: incremental (delete+insert por {TRACKING_COL} + {AT_COL})")
         logger.info("=" * 80)
 
         return {
@@ -93,7 +104,7 @@ async def run_pipeline(table_name: str = TABLE_NAME):
             "inserted_rows_completo": rows_inserted_completo,
             "inserted_rows_uniq": rows_inserted_uniq,
             "tables": [table_name, table_name_uniq],
-            "mode": f"incremental ({TRACKING_COL})",
+            "mode": f"incremental ({TRACKING_COL} + {AT_COL})",
         }
 
     except Exception as e:
