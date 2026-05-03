@@ -477,53 +477,44 @@ async def extract_shopee_atribuicao() -> Path:
                 }""", pre_succeed_count)
                 
                 logger.info(f"Tentativa {tentativa + 1}/{MAX_TENTATIVAS} — Status: {status_atual}")
+                if tentativa == 0:
+                    body_snippet = await page.evaluate("() => (document.body.innerText || '').replace(/\\s+/g, ' ').substring(0, 400)")
+                    logger.info(f"Body snippet (tentativa 1): '{body_snippet}'")
                 
                 if status_atual == "Succeed":
                     logger.info("✅ Tarefa pronta! Iniciando download...")
-                    # 7. CAPTURAR DOWNLOAD — clique DENTRO do expect_download
-                    async with page.expect_download(timeout=120_000) as download_info:
-                        btn_texto = await page.evaluate("""() => {
-                            // Priorizar botão Download na PRIMEIRA LINHA da tabela (nova tarefa)
-                            const rows = document.querySelectorAll(
-                                'tr.ant-table-row, .ssc-react-table-row, .ant-table-tbody tr, tbody tr'
-                            );
-                            if (rows.length > 0) {
-                                const btns = Array.from(rows[0].querySelectorAll('button'));
-                                const dlBtn = btns.find(b => {
-                                    const t = (b.innerText || b.textContent || '').trim();
-                                    return t === 'Download' || t === 'Baixar';
-                                });
-                                if (dlBtn) {
-                                    dlBtn.click();
-                                    return (dlBtn.innerText || dlBtn.textContent).trim();
-                                }
-                            }
-                            // Fallback: qualquer botão Download/Baixar na página
-                            const allBtns = Array.from(document.querySelectorAll('button'));
-                            const dlBtn = allBtns.find(b => {
-                                const t = (b.innerText || b.textContent || '').trim();
-                                return t === 'Download' || t === 'Baixar';
-                            });
-                            if (dlBtn) {
-                                dlBtn.click();
-                                return (dlBtn.innerText || dlBtn.textContent).trim();
-                            }
-                            return null;
-                        }""")
-                    
-                    if btn_texto:
-                        logger.info(f"✅ Download iniciado (botão: '{btn_texto}')")
-                        download_clicado = True
-                    else:
-                        logger.warning("Botão Download não clicado via JS. Tentando Playwright...")
+                    # 7. CAPTURAR DOWNLOAD — clicar no botão Download mais alto na tela
+                    # O SSC virtual table pode ter DOM order diferente da ordem visual.
+                    # Ordenar por posição Y garante que clicamos na tarefa mais recente (topo da lista).
+                    download_btns = await page.locator(
+                        'button:has-text("Download"), button:has-text("Baixar")'
+                    ).all()
+                    logger.info(f"Botões Download encontrados: {len(download_btns)}")
+
+                    btns_com_pos = []
+                    for btn in download_btns:
                         try:
-                            loc = page.locator('button:has-text("Download"), button:has-text("Baixar")').first
-                            async with page.expect_download(timeout=120_000) as download_info:
-                                await loc.click(force=True)
-                            logger.info("✅ Download iniciado via Playwright.")
-                            download_clicado = True
-                        except Exception as e:
-                            logger.error(f"Falha no clique do Download: {e}")
+                            bbox = await btn.bounding_box()
+                            if bbox and bbox["y"] >= 0:
+                                btns_com_pos.append((bbox["y"], btn))
+                        except Exception:
+                            pass
+
+                    if btns_com_pos:
+                        btns_com_pos.sort(key=lambda x: x[0])
+                        top_btn = btns_com_pos[0][1]
+                        logger.info(f"Clicando botão mais alto (Y={btns_com_pos[0][0]:.0f}px) de {len(btns_com_pos)} encontrados.")
+                        async with page.expect_download(timeout=120_000) as download_info:
+                            await top_btn.click(force=True)
+                        download_clicado = True
+                        logger.info("✅ Download iniciado via botão topmost.")
+                    else:
+                        logger.warning("Nenhum botão com posição obtida — usando primeiro na DOM.")
+                        loc = page.locator('button:has-text("Download"), button:has-text("Baixar")').first
+                        async with page.expect_download(timeout=120_000) as download_info:
+                            await loc.click(force=True)
+                        download_clicado = True
+                        logger.info("✅ Download iniciado via fallback DOM.")
                     break
                 
                 elif status_atual == "Failed":
