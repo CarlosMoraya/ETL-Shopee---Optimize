@@ -461,10 +461,21 @@ async def extract_shopee_atribuicao() -> Path:
             logger.info("Aguardando tarefa mais recente atingir status 'Succeed'...")
             download_clicado = False
             MAX_TENTATIVAS = 14  # até ~7 minutos (14 × 30s)
-            
+
             for tentativa in range(MAX_TENTATIVAS):
+                # Forçar renderização do SSC virtual table via scroll
+                await page.evaluate("""() => {
+                    const scroller = document.querySelector(
+                        '.ant-table-body, .ssc-react-table-body, .ssc-react-table-container, table'
+                    );
+                    if (scroller) { scroller.scrollTop = 1; scroller.scrollTop = 0; }
+                    window.scrollTo(0, 100);
+                    window.scrollTo(0, 0);
+                }""")
+                await page.wait_for_timeout(2_000)
+
                 await page.screenshot(path=str(output_path / f"task_center_{tentativa:02d}.png"))
-                
+
                 # Verificar status apenas da PRIMEIRA LINHA (nova tarefa).
                 # Comparar com snapshot pré-export para não confundir com tarefa anterior já "Succeed".
                 status_atual = await page.evaluate("""(preExportSnapshot) => {
@@ -475,8 +486,18 @@ async def extract_shopee_atribuicao() -> Path:
                         const body = document.body.innerText || '';
                         return 'WAITING|no_rows|' + body.replace(/\\s+/g, ' ').substring(0, 120);
                     }
-                    const firstRowText = (rows[0].innerText || rows[0].textContent || '')
-                        .replace(/\\s+/g, ' ').trim();
+                    const firstRow = rows[0];
+                    // Tentar innerText primeiro; se vazio, buscar em células individualmente
+                    let firstRowText = (firstRow.innerText || '').replace(/\\s+/g, ' ').trim();
+                    if (!firstRowText) {
+                        const cells = Array.from(firstRow.querySelectorAll('td, .ssc-react-table-cell'));
+                        firstRowText = cells
+                            .map(td => (td.innerText || td.textContent || '').trim())
+                            .join(' ').replace(/\\s+/g, ' ').trim();
+                    }
+                    if (!firstRowText) {
+                        firstRowText = (firstRow.textContent || '').replace(/\\s+/g, ' ').trim();
+                    }
                     // Se a primeira linha ainda é igual ao snapshot pré-export, nova tarefa não apareceu
                     if (preExportSnapshot && preExportSnapshot.length > 20 &&
                         firstRowText.substring(0, 60) === preExportSnapshot.substring(0, 60)) {
@@ -546,7 +567,7 @@ async def extract_shopee_atribuicao() -> Path:
                     logger.info(f"Aguardando 30s antes da próxima verificação...")
                     await page.wait_for_timeout(30_000)
                     await page.reload(wait_until="networkidle")
-                    await page.wait_for_timeout(5_000)
+                    await page.wait_for_timeout(12_000)
             
             if not download_clicado:
                 await page.screenshot(path=str(output_path / "erro_timeout_succeed.png"))
