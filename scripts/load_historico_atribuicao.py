@@ -12,7 +12,7 @@ import psycopg2
 from datetime import datetime
 from sqlalchemy import create_engine, text, Text
 
-from src.utils import get_logger, get_neon_connection_string
+from src.utils import get_logger, get_supabase_connection_string
 
 logger = get_logger(__name__)
 
@@ -55,7 +55,7 @@ def normalizar(df: pd.DataFrame) -> pd.DataFrame:
 
 def copy_load(df: pd.DataFrame, table_name: str):
     """Cria/recria a tabela via to_sql (1 linha) e depois COPY para o bulk."""
-    conn_str = get_neon_connection_string()
+    conn_str = get_supabase_connection_string()
     if "?sslmode=require" not in conn_str:
         conn_str += "?sslmode=require"
 

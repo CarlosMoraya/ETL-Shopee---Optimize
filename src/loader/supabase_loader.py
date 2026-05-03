@@ -1,0 +1,251 @@
+"""
+Loader para banco de dados Supabase (PostgreSQL)
+"""
+import pandas as pd
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+from typing import Optional
+import os
+
+from src.utils import get_logger, get_supabase_connection_string
+
+logger = get_logger(__name__)
+
+
+def create_supabase_engine() -> Engine:
+    """
+    Cria uma engine de conexão com o Supabase.
+
+    Returns:
+        Engine: SQLAlchemy engine configurada
+    """
+    connection_string = get_supabase_connection_string()
+
+    # Adicionar pool_size e pool_pre_ping para conexões serverless
+    if "?sslmode=require" not in connection_string:
+        connection_string += "?sslmode=require"
+
+    engine = create_engine(
+        connection_string,
+        pool_size=5,
+        max_overflow=2,
+        pool_pre_ping=True,
+        pool_recycle=300,
+    )
+
+    logger.info("Engine do Supabase criada com sucesso!")
+    return engine
+
+
+def load_to_supabase(
+    df: pd.DataFrame,
+    table_name: str,
+    schema: str = "public",
+    if_exists: str = "append",
+    chunksize: int = 1000,
+) -> int:
+    """
+    Carrega um DataFrame no Supabase.
+
+    Args:
+        df: DataFrame com os dados
+        table_name: Nome da tabela
+        schema: Schema do banco (default: public)
+        if_exists: 'append', 'replace' ou 'fail'
+        chunksize: Tamanho dos lotes de insert
+
+    Returns:
+        int: Número de linhas inseridas
+    """
+    logger.info(f"Iniciando carga para tabela: {schema}.{table_name}")
+    logger.info(f"Linhas para inserir: {len(df)}")
+
+    engine = create_supabase_engine()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = '{schema}'
+                    AND table_name = '{table_name}'
+                );
+            """))
+            tabela_existe = result.scalar()
+
+        if if_exists == "append":
+            if not tabela_existe:
+                logger.info(f"Tabela {schema}.{table_name} não existe. Criando...")
+                if_exists = "replace"
+            else:
+                logger.info(f"Tabela {schema}.{table_name} já existe. Append mode.")
+
+        # Quando replace e tabela já existe: TRUNCATE + INSERT para preservar views dependentes
+        if if_exists == "replace" and tabela_existe:
+            logger.info(f"Tabela {schema}.{table_name} já existe. Usando TRUNCATE + INSERT para preservar objetos dependentes.")
+
+            # Adicionar colunas novas que existem no DataFrame mas não na tabela
+            with engine.connect() as conn:
+                result = conn.execute(text(f"""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = '{schema}' AND table_name = '{table_name}'
+                """))
+                colunas_existentes = {row[0] for row in result.fetchall()}
+
+            colunas_novas = [col for col in df.columns if col not in colunas_existentes]
+            if colunas_novas:
+                logger.info(f"Adicionando colunas novas à tabela: {colunas_novas}")
+                with engine.connect() as conn:
+                    for col in colunas_novas:
+                        conn.execute(text(f'ALTER TABLE {schema}.{table_name} ADD COLUMN IF NOT EXISTS "{col}" TEXT'))
+                    conn.commit()
+
+            with engine.connect() as conn:
+                conn.execute(text(f"TRUNCATE TABLE {schema}.{table_name}"))
+                conn.commit()
+            rows_inserted = df.to_sql(
+                name=table_name,
+                con=engine,
+                schema=schema,
+                if_exists="append",
+                index=False,
+                chunksize=chunksize,
+                method="multi",
+            )
+        else:
+            # Carregar dados (tabela não existe — cria normalmente)
+            rows_inserted = df.to_sql(
+                name=table_name,
+                con=engine,
+                schema=schema,
+                if_exists=if_exists,
+                index=False,
+                chunksize=chunksize,
+                method="multi",
+            )
+
+        logger.info(f"✅ Carga concluída! {rows_inserted} linhas inseridas.")
+        return rows_inserted
+
+    except Exception as e:
+        logger.error(f"❌ Erro na carga: {e}")
+        raise
+    finally:
+        engine.dispose()
+
+
+def execute_query(query: str, params: dict = None) -> list:
+    """
+    Executa uma query SQL no Supabase.
+
+    Args:
+        query: Query SQL
+        params: Parâmetros da query
+
+    Returns:
+        list: Resultados da query
+    """
+    logger.info(f"Executando query: {query[:100]}...")
+
+    engine = create_supabase_engine()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(query), params or {})
+            conn.commit()
+
+            if result.returns_rows:
+                rows = result.fetchall()
+                logger.info(f"Query retornou {len(rows)} linhas")
+                return rows
+            else:
+                logger.info("Query executada com sucesso (sem retorno)")
+                return []
+
+    except Exception as e:
+        logger.error(f"❌ Erro na query: {e}")
+        raise
+    finally:
+        engine.dispose()
+
+
+def upsert_to_supabase(
+    df: pd.DataFrame,
+    table_name: str,
+    schema: str = "public",
+    conflict_columns: list = None,
+) -> int:
+    """
+    Realiza UPSERT (insert or update) no Supabase.
+
+    Args:
+        df: DataFrame com os dados
+        table_name: Nome da tabela
+        schema: Schema do banco
+        conflict_columns: Colunas para conflito (ON CONFLICT)
+
+    Returns:
+        int: Número de linhas afetadas
+    """
+    logger.info(f"Iniciando UPSERT para tabela: {schema}.{table_name}")
+
+    if not conflict_columns:
+        logger.warning("Nenhuma coluna de conflito especificada. Usando append.")
+        return load_to_supabase(df, table_name, schema, if_exists="append")
+
+    engine = create_supabase_engine()
+
+    try:
+        # Criar tabela temporária
+        temp_table = f"{table_name}_temp"
+
+        # Deduplicar pelo(s) conflict_column(s) — mantém última ocorrência
+        antes = len(df)
+        df = df.drop_duplicates(subset=conflict_columns, keep="last")
+        if len(df) < antes:
+            logger.warning(f"{antes - len(df)} linha(s) duplicadas removidas do DataFrame antes do upsert.")
+
+        # Inserir dados na temporária
+        df.to_sql(
+            name=temp_table,
+            con=engine,
+            schema=schema,
+            if_exists="replace",
+            index=False,
+            chunksize=1000,
+            method="multi",
+        )
+
+        logger.info(f"Tabela temporária {temp_table} criada com {len(df)} linhas")
+
+        # Construir colunas para INSERT
+        columns = df.columns.tolist()
+        columns_str = ", ".join(columns)
+        values_str = ", ".join([f"EXCLUDED.{col}" for col in columns])
+        conflict_cols_str = ", ".join(conflict_columns)
+
+        # UPSERT
+        query = f"""
+            INSERT INTO {schema}.{table_name} ({columns_str})
+            SELECT {columns_str} FROM {schema}.{temp_table}
+            ON CONFLICT ({conflict_cols_str}) DO UPDATE SET
+            {", ".join([f"{col} = EXCLUDED.{col}" for col in columns if col not in conflict_columns])}
+        """
+
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            conn.commit()
+            rows_affected = result.rowcount
+            # Dropar tabela temporária dentro do mesmo bloco de conexão
+            conn.execute(text(f"DROP TABLE IF EXISTS {schema}.{temp_table}"))
+            conn.commit()
+
+        logger.info(f"✅ UPSERT concluído! {rows_affected} linhas afetadas.")
+        return rows_affected
+
+    except Exception as e:
+        logger.error(f"❌ Erro no UPSERT: {e}")
+        raise
+    finally:
+        engine.dispose()

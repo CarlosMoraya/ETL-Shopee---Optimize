@@ -1,11 +1,11 @@
 """
 Loaders ETL Shopee
 """
-from .neon_loader import load_to_neon, execute_query, upsert_to_neon, create_neon_engine
+from .supabase_loader import load_to_supabase, execute_query, upsert_to_supabase, create_supabase_engine
 
 __all__ = [
-    "load_to_neon",
+    "load_to_supabase",
     "execute_query",
-    "upsert_to_neon",
-    "create_neon_engine",
+    "upsert_to_supabase",
+    "create_supabase_engine",
 ]

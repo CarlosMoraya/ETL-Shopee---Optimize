@@ -1,0 +1,40 @@
+embarcador,driver_id,driver_name,agency,driver_station,contract_type,vehicle_type,assigned,delivery_progress,handed_over,delivered_qtd,delivered_perc,delivering_qtd,delivering_perc,failed_delivery_qtd,failed_delivery_perc,stuck_at_delivering,on_hold,assigned_time,time_since_last_delivery,idle_tag,expected_delivered_percentage,delayed_flags,extracted_at
+Shopee_Last_Mile,320149,DIEGO SOUZA SANTANA,OPTIMIZE,LM Hub_BA_Simões Filho,Agency,4WH,21,100.00%,21,0,0%,0,0%,21,100%,0,21,,,Not Working,11.68%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,1154640,LUCIVAL BATISTA DE SOUZA JUNIOR,OPTIMIZE,LM Hub_BA_Simões Filho,Agency,4WH,3,100.00%,3,0,0%,0,0%,3,100%,0,3,,,Not Working,12.26%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3639320,Joel Nascimento da Silva,OPTIMIZE,LM Hub_ES_Cachoeiro de Itap,Agency,4WH,2,100.00%,2,0,0%,0,0%,2,100%,0,2,,,Not Working,25.82%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,1213103,LEONARDO FERREIRA DA COSTA,OPTIMIZE,LM Hub_ES_Cariacica,Agency,2WH,4,100.00%,4,0,0%,0,0%,4,100%,0,4,,,Not Working,100.00%,Delayed,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2441323,Jonathan Nascimento de Almeida,OPTIMIZE,LM Hub_ES_Cariacica,Agency,4WH,69,100.00%,69,54,78.26%,0,0%,15,21.74%,0,15,,,Not Working,88.22%,Delayed,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2939995,ELIZEU SARAFIM DOS SANTOS,OPTIMIZE,LM Hub_ES_Cariacica,Agency,4WH,5,100.00%,5,1,20%,0,0%,4,80%,0,4,,,Not Working,85.12%,Delayed,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3196935,Jonathan ferreira neves,OPTIMIZE,LM Hub_ES_Cariacica,Agency,4WH,14,100.00%,14,0,0%,0,0%,14,100%,0,14,,,Not Working,91.61%,Delayed,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3373596,Cláudio Henrique bertolino cavalcante,OPTIMIZE,LM Hub_ES_Linhares,Agency,4WH,1,100.00%,1,0,0%,0,0%,1,100%,0,1,,,Not Working,14.68%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,1083258,HENRIQUE FERREIRA SAKALO,OPTIMIZE,LM Hub_ES_Vila Velha,Agency,4WH,3,100.00%,3,0,0%,0,0%,3,100%,0,3,,,Not Working,88.26%,Delayed,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3492510,MATEUS FRAZAO CORREA,OPTIMIZE,LM Hub_MA_São Luís_02,Agency,4WH,12,100.00%,12,0,0%,0,0%,12,100%,0,12,,,Not Working,15.08%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3548164,Magnilson Santos soares,OPTIMIZE,LM Hub_MA_São Luís_02,Agency,4WH,10,100.00%,10,0,0%,0,0%,10,100%,0,10,,,Not Working,13.29%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3618396,Victor Gabriel Mendes Martins,OPTIMIZE,LM Hub_MA_São Luís_02,Agency,4WH,13,100.00%,13,0,0%,0,0%,13,100%,0,13,,,Not Working,12.02%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3639237,Eduardo Felipe Rodrigues dos Santos,OPTIMIZE,LM Hub_MA_São Luís_02,Agency,4WH,15,100.00%,15,0,0%,0,0%,15,100%,0,15,,,Not Working,11.14%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3656957,LUIS FERNANDO AIRES CARVALHO,OPTIMIZE,LM Hub_MA_São Luís_02,Agency,4WH,10,100.00%,10,0,0%,0,0%,10,100%,0,10,,,Not Working,10.56%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3621444,JOELSON DE SOUZA GASPAR,OPTIMIZE,LM Hub_MT_Cuiabá,Agency,4WH,7,100.00%,7,0,0%,0,0%,7,100%,0,7,,,Not Working,13.68%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3121435,LUIZ MARCELO SERRAO CARDOSO,OPTIMIZE,LM Hub_PA_Belém,Agency,2WH,1,100.00%,1,0,0%,0,0%,1,100%,0,1,,,Not Working,13.73%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3216257,Walquir de Almeida gomes,OPTIMIZE,LM Hub_PA_Belém,Agency,4WH,4,100.00%,4,0,0%,0,0%,4,100%,0,4,,,Not Working,18.89%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3483832,Elieldo Lameira Brito,OPTIMIZE,LM Hub_PA_Belém,Agency,2WH,1,100.00%,1,0,0%,0,0%,1,100%,0,1,,,Not Working,9.45%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2598019,ADSON SANTANA DA CUNHA,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,6,100.00%,6,0,0%,0,0%,6,100%,0,6,,,Not Working,15.38%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3641458,RONDINELE PETERSON FERNANDES DOS ANJOS,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,9,100.00%,9,0,0%,0,0%,9,100%,0,9,,,Not Working,14.60%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3655805,LEANDRO RAIMUNDO DA SILVA LEONARDO,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,8,100.00%,8,0,0%,0,0%,8,100%,0,8,,,Not Working,14.55%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2220083,MATHEUS BARCELLOS DE MIRANDA,OPTIMIZE,LM Hub_RJ_Rio de Janeiro_Campo G,Agency,4WH,6,100.00%,6,0,0%,0,0%,6,100%,0,6,,,Not Working,13.87%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2472968,IAGO ANTUNES BATISTA,OPTIMIZE,LM Hub_RJ_Rio de Janeiro_Campo G,Agency,2WH,59,100.00%,59,0,0%,0,0%,59,100%,0,59,,,Not Working,14.41%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3534529,thiago tiburcio de faria,OPTIMIZE,LM Hub_RJ_Rio de Janeiro_Campo G,Agency,4WH,107,100.00%,107,0,0%,0,0%,107,100%,0,107,,,Not Working,12.86%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3308266,RITA DE CASSIA TRINDADE OLIVEIRA,OPTIMIZE,LM Hub_ES_Vila Velha,Agency,4WH,74,98.65%,74,31,41.89%,1,1.35%,42,56.76%,0,42,,0:0,Not Working,100.00%,Delayed,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2083137,MARCOS VINICIUS FELIX DA SILVA,OPTIMIZE,LM Hub_RJ_Rio de Janeiro_Campo G,Agency,4WH,33,45.45%,33,15,45.45%,17,51.52%,0,0%,0,0,2026-05-03 06:44:52,0:2,Active,15.16%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2234037,JAIME FERREIRA MARTINS,OPTIMIZE,LM Hub_PA_Belém,Agency,4WH,51,24.07%,54,13,24.07%,41,75.93%,0,0%,3,0,,0:2,Not Working,15.09%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,393492,EMANUELA LEITE BRITO,OPTIMIZE,LM Hub_ES_Vila Velha,Agency,4WH,92,22.83%,92,18,19.57%,71,77.17%,3,3.26%,0,3,2026-05-03 06:10:57,0:2,Active,46.71%,Delayed,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2207080,Nilton Christian Perin,OPTIMIZE,LM Hub_ES_Cachoeiro de Itap,Agency,4WH,106,22.64%,106,23,21.7%,82,77.36%,1,0.94%,0,1,2026-05-03 06:29:20,0:8,Active,19.32%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2397406,Rodrigo Cassiano Silva de Carvalho,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,6,14.63%,41,0,0%,35,85.37%,6,14.63%,35,6,,,Not Working,14.85%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3270375,Murilo Rodrigues ferreira,OPTIMIZE,LM Hub_ES_Cachoeiro de Itap,Agency,4WH,114,12.28%,114,14,12.28%,99,86.84%,0,0%,0,0,2026-05-03 07:43:10,0:0,Active,13.78%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3059265,Julio Gabriel Piedade Ribeiro,OPTIMIZE,LM Hub_MA_São Luís_02,Agency,4WH,57,8.77%,57,4,7.02%,52,91.23%,1,1.75%,0,1,,0:0,Not Working,14.00%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,269475,WENDELL SILVA SOARES,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,4,6.06%,66,0,0%,62,93.94%,4,6.06%,62,4,,,Not Working,16.58%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3117900,CLEYLTON CORREIA DE OLIVEIRA BASTOS,OPTIMIZE,LM Hub_BA_Simões Filho,Agency,4WH,21,4.76%,21,0,0%,20,95.24%,1,4.76%,0,1,2026-05-03 08:21:43,,Journey Started,16.76%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3564725,ANDRE VINICIUS FEITOSA DE SA BEZERRA,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,75,1.33%,75,0,0%,74,98.67%,1,1.33%,0,1,2026-05-03 06:19:52,,Journey Started,27.53%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3542998,Renato Barreto da Silva Junior,OPTIMIZE,LM Hub_ES_Cachoeiro de Itap,Agency,4WH,118,0.00%,118,0,0%,117,99.15%,0,0%,0,0,2026-05-03 06:08:14,,Journey Started,14.80%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2486802,RENAN FAGUNDES CARDOSO,OPTIMIZE,LM Hub_PA_Belém,Agency,4WH,0,0.00%,86,0,0%,86,100%,0,0%,86,0,,,Not Working,14.24%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,2346963,JAILSON RAMOS DA SILVA,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,0,0.00%,1,0,0%,1,100%,0,0%,1,0,,,Not Working,25.05%,Normal,2026-05-03 09:34:03.234316
+Shopee_Last_Mile,3639010,JOSE MANOEL PEREIRA FILHO,OPTIMIZE,LM Hub_PE_Recife_Cabo de Santo A,Agency,4WH,104,0.00%,104,0,0%,103,99.04%,0,0%,0,0,2026-05-03 05:36:31,,Journey Started,13.77%,Normal,2026-05-03 09:34:03.234316

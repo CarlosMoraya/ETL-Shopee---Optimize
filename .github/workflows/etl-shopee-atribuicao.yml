@@ -33,7 +33,7 @@ jobs:
 
       - name: Rodar Pipeline ETL
         env:
-          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
           SHOPEE_EMAIL: ${{ secrets.SHOPEE_EMAIL }}
           SHOPEE_PWD: ${{ secrets.SHOPEE_PWD }}
         run: |

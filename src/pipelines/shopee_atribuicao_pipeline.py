@@ -1,6 +1,6 @@
 """
 Pipeline ETL: Shopee Atribuição de Entrega
-Extract -> Transform -> Load para Neon (tabela: shopee_atribuicao)
+Extract -> Transform -> Load para Supabase (tabela: shopee_atribuicao)
 
 Estratégia de carga: replace (recria a tabela a cada execução)
 """
@@ -10,7 +10,7 @@ from datetime import datetime
 
 from src.utils import get_logger
 from src.extractors.shopee_atribuicao_crawler import extract_shopee_atribuicao
-from src.loader.neon_loader import load_to_neon, execute_query
+from src.loader.supabase_loader import load_to_supabase, execute_query
 
 logger = get_logger(__name__)
 
@@ -29,11 +29,11 @@ def _partial_load(df: pd.DataFrame, table_name: str, schema: str = "public") -> 
 
     if not tabela_existe:
         logger.info(f"Tabela {table_name} não existe — criando via replace...")
-        return load_to_neon(df, table_name, schema, if_exists="replace")
+        return load_to_supabase(df, table_name, schema, if_exists="replace")
 
     if TRACKING_COL not in df.columns or AT_COL not in df.columns:
         logger.warning(f"Colunas de chave não encontradas — usando replace completo.")
-        return load_to_neon(df, table_name, schema, if_exists="replace")
+        return load_to_supabase(df, table_name, schema, if_exists="replace")
 
     # Deletar por assignment_task_id — lista muito menor que pares (tracking, AT),
     # preserva ATs antigas com mesmo tracking e evita queries excessivamente grandes.
@@ -45,7 +45,7 @@ def _partial_load(df: pd.DataFrame, table_name: str, schema: str = "public") -> 
         )
         logger.info(f"Deletadas linhas de {len(at_vals)} ATs existentes.")
 
-    rows_inserted = load_to_neon(df, table_name, schema, if_exists="append")
+    rows_inserted = load_to_supabase(df, table_name, schema, if_exists="append")
     logger.info(f"✅ Carga incremental concluída: {rows_inserted} linhas inseridas.")
     return rows_inserted
 

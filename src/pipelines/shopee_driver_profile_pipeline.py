@@ -1,6 +1,6 @@
 """
 Pipeline ETL: Shopee Perfil do Motorista
-Extract -> Transform -> Load para Neon (tabela: shopee_base_drivers)
+Extract -> Transform -> Load para Supabase (tabela: shopee_base_drivers)
 """
 import asyncio
 import pandas as pd
@@ -9,7 +9,7 @@ from datetime import datetime
 
 from src.utils import get_logger
 from src.extractors.shopee_driver_profile_crawler import extract_shopee_driver_profile
-from src.loader.neon_loader import load_to_neon
+from src.loader.supabase_loader import load_to_supabase
 
 logger = get_logger(__name__)
 
@@ -39,7 +39,7 @@ async def run_pipeline(table_name: str = "shopee_base_drivers"):
         logger.info("\n📤 FASE 3: CARGA")
         logger.info(f"Tabela destino: {table_name}")
 
-        rows_inserted = load_to_neon(
+        rows_inserted = load_to_supabase(
             df=df,
             table_name=table_name,
             schema="public",

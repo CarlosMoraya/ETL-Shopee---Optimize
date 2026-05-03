@@ -1,6 +1,6 @@
 """
 Pipeline ETL: Shopee Monitoramento de Motoristas
-Extract -> Transform -> Load para Neon
+Extract -> Transform -> Load para Supabase
 """
 import asyncio
 import pandas as pd
@@ -9,7 +9,7 @@ from datetime import datetime
 
 from src.utils import get_logger
 from src.extractors.shopee_monitoramento_crawler import extract_shopee_monitoramento
-from src.loader.neon_loader import load_to_neon
+from src.loader.supabase_loader import load_to_supabase
 
 logger = get_logger(__name__)
 
@@ -61,7 +61,7 @@ async def run_pipeline(table_name: str = "shopee_monitoramento"):
     Executa o pipeline ETL completo.
     
     Args:
-        table_name: Nome da tabela no Neon
+        table_name: Nome da tabela no Supabase
     """
     logger.info("=" * 80)
     logger.info("PIPELINE ETL: SHOPEE MONITORAMENTO DE MOTORISTAS")
@@ -80,7 +80,7 @@ async def run_pipeline(table_name: str = "shopee_monitoramento"):
         logger.info("\n📤 FASE 3: CARGA")
         logger.info(f"Tabela destino: {table_name}")
         
-        rows_inserted = load_to_neon(
+        rows_inserted = load_to_supabase(
             df=df,
             table_name=table_name,
             schema="public",

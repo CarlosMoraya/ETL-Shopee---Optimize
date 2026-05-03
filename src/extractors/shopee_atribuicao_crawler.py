@@ -17,8 +17,6 @@ import asyncio
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
-import re
-
 from playwright.async_api import async_playwright
 
 from src.utils import get_logger, DATA_RAW_DIR
@@ -27,6 +25,7 @@ logger = get_logger(__name__)
 
 PORTAL_URL = "https://logistics.myagencyservice.com.br/"
 ATRIBUICAO_URL = "https://logistics.myagencyservice.com.br/#/agency-assignment/list"
+TASK_CENTER_URL = "https://logistics.myagencyservice.com.br/#/taskCenter/exportTaskCenter"
 
 
 async def extract_shopee_atribuicao() -> Path:
@@ -160,7 +159,21 @@ async def extract_shopee_atribuicao() -> Path:
                 logger.error(f"URL atual: {page.url}")
                 raise Exception("Login pode ter falhado — a URL não era a esperada e nenhum elemento esperado rendeu.")
 
-            # 2. NAVEGAR PARA ATRIBUIÇÃO DE ENTREGA
+            # 2. SNAPSHOT do Task Center ANTES do export para detectar nova tarefa com precisão
+            logger.info("Verificando estado pré-export do Task Center...")
+            await page.goto(TASK_CENTER_URL, wait_until="domcontentloaded", timeout=60_000)
+            await page.wait_for_timeout(8_000)
+            pre_export_first_row = await page.evaluate("""() => {
+                const rows = document.querySelectorAll(
+                    'tr.ant-table-row, .ssc-react-table-row, .ant-table-tbody tr, tbody tr'
+                );
+                if (rows.length === 0) return '';
+                return (rows[0].innerText || rows[0].textContent || '')
+                    .replace(/\\s+/g, ' ').trim().substring(0, 150);
+            }""")
+            logger.info(f"Snapshot pré-export (1ª linha Task Center): '{pre_export_first_row[:80]}'")
+
+            # 3. NAVEGAR PARA ATRIBUIÇÃO DE ENTREGA
             logger.info(f"Navegando para: {ATRIBUICAO_URL}")
             await page.goto(ATRIBUICAO_URL, wait_until="networkidle", timeout=60_000)
             await page.wait_for_timeout(5_000)
@@ -436,11 +449,6 @@ async def extract_shopee_atribuicao() -> Path:
                     raise Exception("Botão 'Export AT' não encontrado.")
 
             # 5. AGUARDAR PROCESSAMENTO NAVEGANDO PARA O TASK CENTER
-            # Descoberta via inspeção: o status de sucesso é "Succeed".
-            # O botão Download está em: button.ssc-button.action-link
-            # Estratégia: navegar para o Task Center, aguardar "Succeed" na linha mais recente
-            # e clicar Download DENTRO do expect_download para capturar corretamente.
-            TASK_CENTER_URL = "https://logistics.myagencyservice.com.br/#/taskCenter/exportTaskCenter"
             logger.info(f"Aguardando 20 segundos antes de verificar o Task Center...")
             await page.wait_for_timeout(20_000)
 
@@ -457,16 +465,28 @@ async def extract_shopee_atribuicao() -> Path:
             for tentativa in range(MAX_TENTATIVAS):
                 await page.screenshot(path=str(output_path / f"task_center_{tentativa:02d}.png"))
                 
-                # SSC React table usa virtual DOM — textContent das linhas fica vazio.
-                # Usar innerText do body inteiro que reflete o texto RENDERIZADO.
-                status_atual = await page.evaluate("""() => {
-                    const body = document.body.innerText || '';
-                    if (body.includes('Succeed')) return 'Succeed';
-                    if (body.includes('Processing')) return 'Processing';
-                    if (body.includes('Failed')) return 'Failed';
-                    // Diagnóstico: retornar amostra do body para o log
-                    return 'WAITING|' + body.replace(/\\s+/g, ' ').substring(0, 120);
-                }""")
+                # Verificar status apenas da PRIMEIRA LINHA (nova tarefa).
+                # Comparar com snapshot pré-export para não confundir com tarefa anterior já "Succeed".
+                status_atual = await page.evaluate("""(preExportSnapshot) => {
+                    const rows = document.querySelectorAll(
+                        'tr.ant-table-row, .ssc-react-table-row, .ant-table-tbody tr, tbody tr'
+                    );
+                    if (rows.length === 0) {
+                        const body = document.body.innerText || '';
+                        return 'WAITING|no_rows|' + body.replace(/\\s+/g, ' ').substring(0, 120);
+                    }
+                    const firstRowText = (rows[0].innerText || rows[0].textContent || '')
+                        .replace(/\\s+/g, ' ').trim();
+                    // Se a primeira linha ainda é igual ao snapshot pré-export, nova tarefa não apareceu
+                    if (preExportSnapshot && preExportSnapshot.length > 20 &&
+                        firstRowText.substring(0, 60) === preExportSnapshot.substring(0, 60)) {
+                        return 'WAITING|aguardando_nova_tarefa';
+                    }
+                    if (firstRowText.includes('Succeed')) return 'Succeed';
+                    if (firstRowText.includes('Processing')) return 'Processing';
+                    if (firstRowText.includes('Failed')) return 'Failed';
+                    return 'WAITING|' + firstRowText.substring(0, 120);
+                }""", pre_export_first_row)
                 
                 logger.info(f"Tentativa {tentativa + 1}/{MAX_TENTATIVAS} — Status: {status_atual}")
                 
@@ -475,8 +495,22 @@ async def extract_shopee_atribuicao() -> Path:
                     # 7. CAPTURAR DOWNLOAD — clique DENTRO do expect_download
                     async with page.expect_download(timeout=120_000) as download_info:
                         btn_texto = await page.evaluate("""() => {
-                            // Buscar botão Download pela API de texto renderizado
-                            // (innerText), independente da estrutura de tabela
+                            // Priorizar botão Download na PRIMEIRA LINHA da tabela (nova tarefa)
+                            const rows = document.querySelectorAll(
+                                'tr.ant-table-row, .ssc-react-table-row, .ant-table-tbody tr, tbody tr'
+                            );
+                            if (rows.length > 0) {
+                                const btns = Array.from(rows[0].querySelectorAll('button'));
+                                const dlBtn = btns.find(b => {
+                                    const t = (b.innerText || b.textContent || '').trim();
+                                    return t === 'Download' || t === 'Baixar';
+                                });
+                                if (dlBtn) {
+                                    dlBtn.click();
+                                    return (dlBtn.innerText || dlBtn.textContent).trim();
+                                }
+                            }
+                            // Fallback: qualquer botão Download/Baixar na página
                             const allBtns = Array.from(document.querySelectorAll('button'));
                             const dlBtn = allBtns.find(b => {
                                 const t = (b.innerText || b.textContent || '').trim();

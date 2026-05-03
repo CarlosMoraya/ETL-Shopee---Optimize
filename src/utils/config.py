@@ -50,14 +50,14 @@ def get_env(key: str, default: str = None) -> str:
     return value
 
 
-def get_neon_connection_string() -> str:
+def get_supabase_connection_string() -> str:
     """
-    Obtém a string de conexão do Neon.
-    
+    Obtém a string de conexão do Supabase.
+
     Returns:
         str: Connection string formatada
     """
-    return get_env("NEON_DATABASE_URL")
+    return get_env("SUPABASE_DATABASE_URL")
 
 
 # Configurações de credenciais Shopee
