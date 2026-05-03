@@ -28,6 +28,30 @@ ATRIBUICAO_URL = "https://logistics.myagencyservice.com.br/#/agency-assignment/l
 TASK_CENTER_URL = "https://logistics.myagencyservice.com.br/#/taskCenter/exportTaskCenter"
 
 
+def _count_export_rows(file_path: Path) -> int:
+    """Conta as linhas de dados do arquivo exportado antes de aceitar o download."""
+    import zipfile
+    import pandas as pd
+
+    suffix = file_path.suffix.lower()
+    if suffix == ".zip":
+        with zipfile.ZipFile(file_path, "r") as z:
+            names = [name for name in z.namelist() if not name.endswith("/")]
+            if not names:
+                return 0
+
+            inner_name = names[0]
+            with z.open(inner_name) as f:
+                inner_suffix = Path(inner_name).suffix.lower()
+                df = pd.read_csv(f) if inner_suffix == ".csv" else pd.read_excel(f)
+    elif suffix == ".csv":
+        df = pd.read_csv(file_path)
+    else:
+        df = pd.read_excel(file_path)
+
+    return len(df)
+
+
 async def extract_shopee_atribuicao() -> Path:
     import pandas as pd
 
@@ -243,8 +267,10 @@ async def extract_shopee_atribuicao() -> Path:
             logger.info("Preenchendo filtro de data (últimos 30 dias)...")
             hoje = datetime.now()
             data_inicio = hoje - timedelta(days=30)
-            str_inicio = data_inicio.strftime("%d/%m/%Y")
-            str_fim = hoje.strftime("%d/%m/%Y")
+            # Apesar da interface estar em pt-BR, o componente envia a data para
+            # a exportação interpretando o campo como MM/DD/YYYY.
+            str_inicio = data_inicio.strftime("%m/%d/%Y")
+            str_fim = hoje.strftime("%m/%d/%Y")
             logger.info(f"Intervalo de datas: {str_inicio} até {str_fim}")
 
             for seletor, valor, rotulo in [
@@ -388,6 +414,7 @@ async def extract_shopee_atribuicao() -> Path:
             # Os botões das LINHAS da tabela usam 'ssc-react-button-link', logo é seguro filtrar por classe.
             logger.info("Clicando em 'Export AT' em lote...")
             await page.screenshot(path=str(output_path / "pre_export_click.png"))
+            export_requested_epoch = int(datetime.now().timestamp())
             clicado = await page.evaluate("""() => {
                 // Estratégia principal: filtrar por classe para evitar botões de linha
                 // Bulk buttons = ssc-react-button-normal | Row buttons = ssc-react-button-link
@@ -457,62 +484,151 @@ async def extract_shopee_atribuicao() -> Path:
             logger.info("Aguardando tarefa mais recente atingir status 'Succeed'...")
             download_clicado = False
             MAX_TENTATIVAS = 14  # até ~7 minutos (14 × 30s)
+            download_info = None
+
+            task_marker_min_epoch = export_requested_epoch - 120
+            logger.info(
+                f"Usando marcador da exportação atual: ctime >= {task_marker_min_epoch}"
+            )
 
             for tentativa in range(MAX_TENTATIVAS):
                 await page.screenshot(path=str(output_path / f"task_center_{tentativa:02d}.png"))
 
-                # Usar body.innerText para detectar status — o SSC virtual table não expõe
-                # innerText nos elementos tr/td, mas o texto fica acessível no body completo.
-                # Comparar contagem de "Succeed" com o snapshot pré-export para não confundir
-                # com tarefas anteriores que já tinham esse status.
-                status_atual = await page.evaluate("""(preSucceedCount) => {
+                task_atual = await page.evaluate("""({ markerMinEpoch, preSucceedCount }) => {
+                    const buttons = Array.from(document.querySelectorAll('button')).filter(btn => {
+                        const text = (btn.textContent || '').trim();
+                        return text.includes('Download') || text.includes('Baixar');
+                    });
+
+                    const getRowText = (btn) => {
+                        let node = btn;
+                        for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
+                            const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+                            if (
+                                text.includes('br_agency_assignment_task') &&
+                                /Succeed|Processing|Failed/.test(text)
+                            ) {
+                                return text;
+                            }
+                        }
+                        return '';
+                    };
+
+                    const rows = buttons.map((btn, index) => {
+                        const text = getRowText(btn);
+                        const bbox = btn.getBoundingClientRect();
+                        const ctimes = Array.from(text.matchAll(/"ctime"\\s*:\\s*(\\d{10})/g))
+                            .map(match => Number(match[1]))
+                            .filter(Boolean);
+                        const status = text.includes('Failed')
+                            ? 'Failed'
+                            : text.includes('Processing')
+                                ? 'Processing'
+                                : text.includes('Succeed')
+                                    ? 'Succeed'
+                                    : 'WAITING';
+
+                        return {
+                            index,
+                            y: bbox ? bbox.y : 999999,
+                            ctime: ctimes.length ? Math.max(...ctimes) : null,
+                            status,
+                            text: text.slice(0, 500),
+                        };
+                    }).filter(row => row.text.includes('br_agency_assignment_task'));
+
+                    const markedRows = rows
+                        .filter(row => row.ctime !== null && row.ctime >= markerMinEpoch)
+                        .sort((a, b) => (b.ctime - a.ctime) || (a.y - b.y));
+
+                    if (markedRows.length) {
+                        return {
+                            found: true,
+                            via: 'ctime',
+                            ...markedRows[0],
+                            totalRows: rows.length,
+                            markedRows: markedRows.length,
+                        };
+                    }
+
                     const text = document.body.innerText || document.body.textContent || '';
                     const succeedCount = (text.match(/Succeed/g) || []).length;
                     const processingCount = (text.match(/Processing/g) || []).length;
                     const failedCount = (text.match(/Failed/g) || []).length;
-                    if (processingCount > 0) return 'Processing';
-                    if (succeedCount > preSucceedCount) return 'Succeed';
-                    if (failedCount > 0) return 'Failed';
-                    return 'WAITING|succeed=' + succeedCount + '|processing=' + processingCount + '|body_len=' + text.length;
-                }""", pre_succeed_count)
+                    return {
+                        found: false,
+                        via: 'body',
+                        status: processingCount > 0
+                            ? 'Processing'
+                            : succeedCount > preSucceedCount
+                                ? 'Succeed'
+                                : 'WAITING',
+                        totalRows: rows.length,
+                        markedRows: 0,
+                        succeedCount,
+                        processingCount,
+                        failedCount,
+                        text: rows[0]?.text || text.replace(/\\s+/g, ' ').slice(0, 500),
+                    };
+                }""", {
+                    "markerMinEpoch": task_marker_min_epoch,
+                    "preSucceedCount": pre_succeed_count,
+                })
                 
-                logger.info(f"Tentativa {tentativa + 1}/{MAX_TENTATIVAS} — Status: {status_atual}")
+                status_atual = task_atual.get("status", "WAITING")
+                logger.info(
+                    f"Tentativa {tentativa + 1}/{MAX_TENTATIVAS} — "
+                    f"Status: {status_atual} | via={task_atual.get('via')} | "
+                    f"linhas={task_atual.get('totalRows')} | marcadas={task_atual.get('markedRows')}"
+                )
                 if tentativa == 0:
-                    body_snippet = await page.evaluate("() => (document.body.innerText || '').replace(/\\s+/g, ' ').substring(0, 400)")
-                    logger.info(f"Body snippet (tentativa 1): '{body_snippet}'")
+                    logger.info(f"Task snippet (tentativa 1): '{task_atual.get('text', '')}'")
                 
                 if status_atual == "Succeed":
                     logger.info("✅ Tarefa pronta! Iniciando download...")
-                    # 7. CAPTURAR DOWNLOAD — clicar no botão Download mais alto na tela
-                    # O SSC virtual table pode ter DOM order diferente da ordem visual.
-                    # Ordenar por posição Y garante que clicamos na tarefa mais recente (topo da lista).
+                    # 7. CAPTURAR DOWNLOAD — preferir o botão da linha marcada com o
+                    # ctime da exportação recém-solicitada, evitando downloads antigos.
                     download_btns = await page.locator(
                         'button:has-text("Download"), button:has-text("Baixar")'
                     ).all()
                     logger.info(f"Botões Download encontrados: {len(download_btns)}")
 
-                    btns_com_pos = []
-                    for btn in download_btns:
-                        try:
-                            bbox = await btn.bounding_box()
-                            if bbox and bbox["y"] >= 0:
-                                btns_com_pos.append((bbox["y"], btn))
-                        except Exception:
-                            pass
-
-                    if btns_com_pos:
-                        btns_com_pos.sort(key=lambda x: x[0])
-                        top_btn = btns_com_pos[0][1]
-                        logger.info(f"Clicando botão mais alto (Y={btns_com_pos[0][0]:.0f}px) de {len(btns_com_pos)} encontrados.")
-                        async with page.expect_download(timeout=120_000) as download_info:
-                            await top_btn.click(force=True)
+                    task_index = task_atual.get("index")
+                    if task_atual.get("via") == "ctime" and task_index is not None and task_index < len(download_btns):
+                        logger.info(
+                            f"Clicando Download da tarefa atual "
+                            f"(index={task_index}, ctime={task_atual.get('ctime')}, Y={task_atual.get('y'):.0f}px)."
+                        )
+                        async with page.expect_download(timeout=120_000) as captured_download:
+                            await download_btns[task_index].click(force=True)
+                        download_info = captured_download
                         download_clicado = True
-                        logger.info("✅ Download iniciado via botão topmost.")
+                        logger.info("✅ Download iniciado via linha marcada por ctime.")
                     else:
-                        logger.warning("Nenhum botão com posição obtida — usando primeiro na DOM.")
-                        loc = page.locator('button:has-text("Download"), button:has-text("Baixar")').first
-                        async with page.expect_download(timeout=120_000) as download_info:
-                            await loc.click(force=True)
+                        logger.warning("Linha marcada por ctime não encontrada — usando botão visível mais alto como fallback.")
+                        btns_com_pos = []
+                        for btn in download_btns:
+                            try:
+                                bbox = await btn.bounding_box()
+                                if bbox and bbox["y"] >= 0:
+                                    btns_com_pos.append((bbox["y"], btn))
+                            except Exception:
+                                pass
+
+                        if btns_com_pos:
+                            btns_com_pos.sort(key=lambda x: x[0])
+                            fallback_btn = btns_com_pos[0][1]
+                            logger.info(
+                                f"Clicando botão mais alto (Y={btns_com_pos[0][0]:.0f}px) "
+                                f"de {len(btns_com_pos)} encontrados."
+                            )
+                        else:
+                            logger.warning("Nenhum botão com posição obtida — usando primeiro na DOM.")
+                            fallback_btn = page.locator('button:has-text("Download"), button:has-text("Baixar")').first
+
+                        async with page.expect_download(timeout=120_000) as captured_download:
+                            await fallback_btn.click(force=True)
+                        download_info = captured_download
                         download_clicado = True
                         logger.info("✅ Download iniciado via fallback DOM.")
                     break
@@ -536,6 +652,15 @@ async def extract_shopee_atribuicao() -> Path:
             caminho_arquivo = output_path / f"shopee_atribuicao_{timestamp}_{download.suggested_filename}"
             await download.save_as(str(caminho_arquivo))
             logger.info(f"✅ Arquivo baixado: {caminho_arquivo}")
+
+            linhas_download = _count_export_rows(caminho_arquivo)
+            logger.info(f"Linhas no arquivo baixado: {linhas_download}")
+            if linhas_download == 0:
+                await page.screenshot(path=str(output_path / "erro_download_vazio.png"))
+                raise Exception(
+                    "Arquivo baixado da tarefa de exportação atual veio vazio. "
+                    "A carga foi interrompida para evitar gravar um DataFrame sem dados."
+                )
 
         finally:
             await browser.close()
