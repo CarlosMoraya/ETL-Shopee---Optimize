@@ -159,19 +159,15 @@ async def extract_shopee_atribuicao() -> Path:
                 logger.error(f"URL atual: {page.url}")
                 raise Exception("Login pode ter falhado — a URL não era a esperada e nenhum elemento esperado rendeu.")
 
-            # 2. SNAPSHOT do Task Center ANTES do export para detectar nova tarefa com precisão
+            # 2. SNAPSHOT do Task Center ANTES do export — conta quantas tarefas "Succeed" já existem
             logger.info("Verificando estado pré-export do Task Center...")
             await page.goto(TASK_CENTER_URL, wait_until="domcontentloaded", timeout=60_000)
             await page.wait_for_timeout(8_000)
-            pre_export_first_row = await page.evaluate("""() => {
-                const rows = document.querySelectorAll(
-                    'tr.ant-table-row, .ssc-react-table-row, .ant-table-tbody tr, tbody tr'
-                );
-                if (rows.length === 0) return '';
-                return (rows[0].innerText || rows[0].textContent || '')
-                    .replace(/\\s+/g, ' ').trim().substring(0, 150);
+            pre_succeed_count = await page.evaluate("""() => {
+                const text = document.body.innerText || document.body.textContent || '';
+                return (text.match(/Succeed/g) || []).length;
             }""")
-            logger.info(f"Snapshot pré-export (1ª linha Task Center): '{pre_export_first_row[:80]}'")
+            logger.info(f"Tarefas 'Succeed' antes do export: {pre_succeed_count}")
 
             # 3. NAVEGAR PARA ATRIBUIÇÃO DE ENTREGA
             logger.info(f"Navegando para: {ATRIBUICAO_URL}")
@@ -463,51 +459,22 @@ async def extract_shopee_atribuicao() -> Path:
             MAX_TENTATIVAS = 14  # até ~7 minutos (14 × 30s)
 
             for tentativa in range(MAX_TENTATIVAS):
-                # Forçar renderização do SSC virtual table via scroll
-                await page.evaluate("""() => {
-                    const scroller = document.querySelector(
-                        '.ant-table-body, .ssc-react-table-body, .ssc-react-table-container, table'
-                    );
-                    if (scroller) { scroller.scrollTop = 1; scroller.scrollTop = 0; }
-                    window.scrollTo(0, 100);
-                    window.scrollTo(0, 0);
-                }""")
-                await page.wait_for_timeout(2_000)
-
                 await page.screenshot(path=str(output_path / f"task_center_{tentativa:02d}.png"))
 
-                # Verificar status apenas da PRIMEIRA LINHA (nova tarefa).
-                # Comparar com snapshot pré-export para não confundir com tarefa anterior já "Succeed".
-                status_atual = await page.evaluate("""(preExportSnapshot) => {
-                    const rows = document.querySelectorAll(
-                        'tr.ant-table-row, .ssc-react-table-row, .ant-table-tbody tr, tbody tr'
-                    );
-                    if (rows.length === 0) {
-                        const body = document.body.innerText || '';
-                        return 'WAITING|no_rows|' + body.replace(/\\s+/g, ' ').substring(0, 120);
-                    }
-                    const firstRow = rows[0];
-                    // Tentar innerText primeiro; se vazio, buscar em células individualmente
-                    let firstRowText = (firstRow.innerText || '').replace(/\\s+/g, ' ').trim();
-                    if (!firstRowText) {
-                        const cells = Array.from(firstRow.querySelectorAll('td, .ssc-react-table-cell'));
-                        firstRowText = cells
-                            .map(td => (td.innerText || td.textContent || '').trim())
-                            .join(' ').replace(/\\s+/g, ' ').trim();
-                    }
-                    if (!firstRowText) {
-                        firstRowText = (firstRow.textContent || '').replace(/\\s+/g, ' ').trim();
-                    }
-                    // Se a primeira linha ainda é igual ao snapshot pré-export, nova tarefa não apareceu
-                    if (preExportSnapshot && preExportSnapshot.length > 20 &&
-                        firstRowText.substring(0, 60) === preExportSnapshot.substring(0, 60)) {
-                        return 'WAITING|aguardando_nova_tarefa';
-                    }
-                    if (firstRowText.includes('Succeed')) return 'Succeed';
-                    if (firstRowText.includes('Processing')) return 'Processing';
-                    if (firstRowText.includes('Failed')) return 'Failed';
-                    return 'WAITING|' + firstRowText.substring(0, 120);
-                }""", pre_export_first_row)
+                # Usar body.innerText para detectar status — o SSC virtual table não expõe
+                # innerText nos elementos tr/td, mas o texto fica acessível no body completo.
+                # Comparar contagem de "Succeed" com o snapshot pré-export para não confundir
+                # com tarefas anteriores que já tinham esse status.
+                status_atual = await page.evaluate("""(preSucceedCount) => {
+                    const text = document.body.innerText || document.body.textContent || '';
+                    const succeedCount = (text.match(/Succeed/g) || []).length;
+                    const processingCount = (text.match(/Processing/g) || []).length;
+                    const failedCount = (text.match(/Failed/g) || []).length;
+                    if (processingCount > 0) return 'Processing';
+                    if (succeedCount > preSucceedCount) return 'Succeed';
+                    if (failedCount > 0) return 'Failed';
+                    return 'WAITING|succeed=' + succeedCount + '|processing=' + processingCount + '|body_len=' + text.length;
+                }""", pre_succeed_count)
                 
                 logger.info(f"Tentativa {tentativa + 1}/{MAX_TENTATIVAS} — Status: {status_atual}")
                 
